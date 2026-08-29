@@ -8,11 +8,9 @@
 #ifndef BUILD_MAX_FILE
 #define BUILD_MAX_FILE (1024 * 1024)
 #endif
-
 #ifndef BUILD_MAX_OUTPUT
 #define BUILD_MAX_OUTPUT (8 * 1024 * 1024)
 #endif
-
 #ifndef BUILD_MAX_HEADER
 #define BUILD_MAX_HEADER 4096
 #endif
@@ -29,6 +27,11 @@ typedef struct {
 } build_t;
 
 typedef struct {
+    const char *key;
+    const char *value;
+} build_tag_t;
+
+typedef struct {
     const char *name;
     const char *namespace_;
     const char *description;
@@ -37,10 +40,19 @@ typedef struct {
     const char *const *grant;
     size_t grant_count;
     const char *run_at;
+    const build_tag_t *extra;
+    size_t extra_count;
 } build_meta_t;
+
+#define declaremeta(name, ...) \
+    static build_meta_t name = { __VA_ARGS__ }
 
 #define listout(name, ...) \
     static const char *name[] = { __VA_ARGS__ }; \
+    enum { name##_COUNT = sizeof(name) / sizeof(name[0]) }
+
+#define listtags(name, ...) \
+    static const build_tag_t name[] = { __VA_ARGS__ }; \
     enum { name##_COUNT = sizeof(name) / sizeof(name[0]) }
 
 static char *build__read_file(const char *path, long *out_len) {
@@ -132,6 +144,8 @@ static void build_userscript_header(build_t *b, const build_meta_t *m) {
         BUILD__EMIT("// @match        %s\n", m->match[i]);
     for (size_t i = 0; i < m->grant_count; i++)
         BUILD__EMIT("// @grant        %s\n", m->grant[i]);
+    for (size_t i = 0; i < m->extra_count; i++)
+        BUILD__EMIT("// @%-12s %s\n", m->extra[i].key, m->extra[i].value);
     BUILD__EMIT("// @run-at       %s\n", m->run_at ? m->run_at : "document-start");
     BUILD__EMIT("%s", "// ==/UserScript==\n\n");
 
@@ -180,7 +194,15 @@ static void build_add_all(build_t *b, const char *const *paths, size_t count,
 }
 
 static void build_finish(build_t *b, const char *out_path) {
-    /* mkdir -p the containing directory, if any */
+#ifdef BUILD_OUTPUT_FILE
+    if (!out_path) out_path = BUILD_OUTPUT_FILE;
+#endif
+    if (!out_path) {
+        fprintf(stderr, "build: build_finish() needs an output path -- either "
+                         "pass one, or #define BUILD_OUTPUT_FILE before #include \"build.h\"\n");
+        exit(1);
+    }
+
     char dir[1024];
     const char *slash = strrchr(out_path, '/');
     if (slash) {
