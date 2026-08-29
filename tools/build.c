@@ -18,6 +18,7 @@ listout(GRANT,
 listtags(EXTRA,
     { "anonstoryview",   "https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js" },
     { "reelsramsaver",   "https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js" },
+    { "pipinstavideocall",   "https://update.greasyfork.org/scripts/486404/pip%20insta%20video%20call.user.js" },
     );
 
 /* Dependency order matters: namespace first, then core utilities before
@@ -27,6 +28,7 @@ listout(ORDER,
     "src/start.js",
     "src/anonstoryview/script.js",
     "src/reelsramsaver/script.js",
+    "src/pipinstavideocall/script.js",
     "src/end.js",
     );
 
