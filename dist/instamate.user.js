@@ -11,6 +11,10 @@
 // @run-at       document-start
 // ==/UserScript==
 
+// ---- start.js ----
+(() => {
+  'use strict';
+
 // ---- anonstoryview/script.js ----
 // Store a reference to the original send method of XMLHttpRequest
 var originalXMLSend = XMLHttpRequest.prototype.send;
@@ -60,4 +64,7 @@ function cleanUpReels() {
 }
 
 setInterval(cleanUpReels, CHECK_INTERVAL);
+
+// ---- end.js ----
+})();
 
