@@ -16,7 +16,8 @@ listout(GRANT,
 
 /* Custom @tag lines that don't have a fixed build_meta_t field. */
 listtags(EXTRA,
-    { "anonstoryview",   "https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js" }
+    { "anonstoryview",   "https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js" },
+    { "reelsramsaver",   "https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js" }
     );
 
 /* Dependency order matters: namespace first, then core utilities before
@@ -24,6 +25,7 @@ listtags(EXTRA,
  * everything above. */
 listout(ORDER,
     "src/anonstoryview/script.js",
+    "src/reelsramsaver/script.js",
     );
 
 declaremeta(META,
