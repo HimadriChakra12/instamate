@@ -7,6 +7,7 @@
 
 listout(MATCH,
     "https://*.instagram.com/*",
+    "https://*.instagram.com/direct/t/*",
     );
 
 listout(GRANT,
@@ -18,7 +19,9 @@ listout(GRANT,
 listtags(EXTRA,
     { "anonstoryview",   "https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js" },
     { "reelsramsaver",   "https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js" },
-    { "pipinstavideocall",   "https://update.greasyfork.org/scripts/486404/pip%20insta%20video%20call.user.js" },
+//    { "pipinstavideocall",   "https://update.greasyfork.org/scripts/486404/pip%20insta%20video%20call.user.js" },
+//    { "storyviewersearch",   "https://update.greasyfork.org/scripts/590249/Instagram%20Plus%20%28Web%29.user.js" },
+    { "msgname",   "Generated" },
     );
 
 /* Dependency order matters: namespace first, then core utilities before
@@ -28,7 +31,9 @@ listout(ORDER,
     "src/start.js",
     "src/anonstoryview/script.js",
     "src/reelsramsaver/script.js",
-    "src/pipinstavideocall/script.js",
+//    "src/pipinstavideocall/script.js",
+//    "src/storyviewersearch/script.js",
+    "src/msgname/script.js",
     "src/end.js",
     );
 
