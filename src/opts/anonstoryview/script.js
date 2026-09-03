@@ -1,3 +1,4 @@
+    if (IM.isEnabled('anonstoryview')) {
     // Store a reference to the original send method of XMLHttpRequest
     var originalXMLSend = XMLHttpRequest.prototype.send;
     // Override the send method
@@ -12,3 +13,4 @@
             originalXMLSend.apply(this, arguments);
         }
     };
+    }

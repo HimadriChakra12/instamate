@@ -1,3 +1,4 @@
+    if (IM.isEnabled('reelsramsaver')) {
     const CHECK_INTERVAL = 1500;
     const DISTANCE_THRESHOLD = 1000;
     
@@ -30,3 +31,4 @@
     }
     
     setInterval(cleanUpReels, CHECK_INTERVAL);
+    }

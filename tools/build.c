@@ -12,7 +12,9 @@ listout(MATCH,
 
 listout(GRANT,
     "unsafeWindow",
-    "GM_download"
+    "GM_download",
+    "GM_getValue",
+    "GM_setValue"
     );
 
 /* Custom @tag lines that don't have a fixed build_meta_t field. */
@@ -24,16 +26,19 @@ listtags(EXTRA,
     { "msgname",   "Generated" },
     );
 
-/* Dependency order matters: namespace first, then core utilities before
- * anything that calls them, then ui, then entry.js last since it invokes
- * everything above. */
+/* Dependency order matters: namespace first, then core (settings before ui,
+ * since ui reads the opt/addon manifests settings.js defines), then opts,
+ * then addons, then end.js last. */
 listout(ORDER,
     "src/start.js",
-    "src/anonstoryview/script.js",
-    "src/reelsramsaver/script.js",
+    "src/core/settings.js",
+    "src/core/ui.js",
+    "src/opts/anonstoryview/script.js",
+    "src/opts/reelsramsaver/script.js",
+    "src/opts/msgname/script.js",
+    "src/addons/shared-media/script.js",
 //    "src/pipinstavideocall/script.js",
 //    "src/storyviewersearch/script.js",
-    "src/msgname/script.js",
     "src/end.js",
     );
 
