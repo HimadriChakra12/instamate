@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      1.2.06
+// @version      1.2.07
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -12,6 +12,7 @@
 // @anonstoryview https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js
 // @reelsramsaver https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js
 // @msgname      Generated
+// @float        Generated
 // @run-at       document-start
 // ==/UserScript==
 
@@ -515,110 +516,124 @@
 
 // ---- opts/msgname/script.js ----
     if (IM.isEnabled('msgname')) {
-    // Username span
-    const USERNAME_SELECTOR =
-        'div.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x9f619.xjbqb8w.x78zum5.x15mokao.x1ga7v0g.x16uus16.xbiv7yw.x1xmf6yo.x1uhb9sk.x1plvlek.xryxfnj.x1c4vz4f.x2lah0s.xdt5ytf.xqjyukv.x1qjc9v5.x1oa3qoh.x1nhvcw1 span.x1lliihq.x193iq5w.x6ikm8r.x10wlt62.xlyipyv.xuxw1ft';
-
-    // Nickname
-    const NICKNAME_SELECTOR = 'h2 span[title]';
-
-    let lastTitle = '';
-
-    function getUsername() {
-        const elements = document.querySelectorAll(USERNAME_SELECTOR);
-
-        for (const element of elements) {
-            const text = element.textContent.trim();
-
-            if (text) {
-                return text;
+        // Username span
+        const USERNAME_SELECTOR =
+            'div.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x9f619.xjbqb8w.x78zum5.x15mokao.x1ga7v0g.x16uus16.xbiv7yw.x1xmf6yo.x1uhb9sk.x1plvlek.xryxfnj.x1c4vz4f.x2lah0s.xdt5ytf.xqjyukv.x1qjc9v5.x1oa3qoh.x1nhvcw1 span.x1lliihq.x193iq5w.x6ikm8r.x10wlt62.xlyipyv.xuxw1ft';
+    
+        // Nickname
+        const NICKNAME_SELECTOR = 'h2 span[title]';
+    
+        const COUNT_PREFIX = /^\((\d+)\)\s*/;
+    
+        let lastTitle = '';
+    
+        function getUsername() {
+            const elements = document.querySelectorAll(USERNAME_SELECTOR);
+    
+            for (const element of elements) {
+                const text = element.textContent.trim();
+    
+                if (text) {
+                    return text;
+                }
             }
-        }
-
-        return null;
-    }
-
-    function getNickname() {
-        const element = document.querySelector(NICKNAME_SELECTOR);
-
-        if (!element) {
+    
             return null;
         }
-
-        return (
-            element.getAttribute('title')?.trim() ||
-            element.textContent.trim() ||
-            null
-        );
-    }
-
-    function updateTitle() {
-        if (!location.pathname.startsWith('/direct/t/')) {
-            return;
+    
+        function getNickname() {
+            const element = document.querySelector(NICKNAME_SELECTOR);
+    
+            if (!element) {
+                return null;
+            }
+    
+            return (
+                element.getAttribute('title')?.trim() ||
+                element.textContent.trim() ||
+                null
+            );
         }
-
-        const nickname = getNickname();
-        const username = getUsername();
-
-        if (!nickname) {
-            return;
+    
+        function getCurrentCount() {
+            const match = document.title.match(COUNT_PREFIX);
+            return match ? match[1] : null;
         }
-
-        let newTitle;
-
-        if (username) {
-            // Normal DM
-            newTitle = `${nickname} - ${username}`;
-        } else if (nickname === 'Instagram User') {
-            // Deleted/deactivated/etc. account, NOT a group
-            newTitle = nickname;
-        } else {
-            // No username = group
-            newTitle = `${nickname} - Group`;
+    
+        function updateTitle() {
+            if (!location.pathname.startsWith('/direct/t/')) {
+                return;
+            }
+    
+            const nickname = getNickname();
+            const username = getUsername();
+    
+            if (!nickname) {
+                return;
+            }
+    
+            let base;
+    
+            if (username) {
+                // Normal DM
+                base = `${nickname} - ${username}`;
+            } else if (nickname === 'Instagram User') {
+                // Deleted/deactivated/etc. account, NOT a group
+                base = nickname;
+            } else {
+                // No username = group
+                base = `${nickname} - Group`;
+            }
+    
+            // Read whatever count Instagram currently has on the tab title
+            // (whether it just set it, or it's sitting on a title we wrote
+            // last time) and fold it back in, instead of dropping it.
+            const count = getCurrentCount();
+            const newTitle = count ? `(${count}) ${base}` : base;
+    
+            if (newTitle !== lastTitle) {
+                lastTitle = newTitle;
+                document.title = newTitle;
+            } else if (document.title !== lastTitle) {
+                // Instagram overwrote our title with something other than a
+                // count-prefix update -- put ours back.
+                document.title = lastTitle;
+            }
         }
-
-        if (newTitle !== lastTitle) {
-            lastTitle = newTitle;
-            document.title = newTitle;
-        } else if (document.title !== lastTitle) {
-            // Instagram overwrote our title
-            document.title = lastTitle;
+    
+        // Watch for Instagram's dynamically generated DOM
+        function startObserver() {
+            if (!document.documentElement) {
+                requestAnimationFrame(startObserver);
+                return;
+            }
+    
+            const observer = new MutationObserver(updateTitle);
+    
+            observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+                attributes: true,
+                attributeFilter: ['title']
+            });
+    
+            updateTitle();
         }
-    }
-
-    // Watch for Instagram's dynamically generated DOM
-    function startObserver() {
-        if (!document.documentElement) {
-            requestAnimationFrame(startObserver);
-            return;
-        }
-
-        const observer = new MutationObserver(updateTitle);
-
-        observer.observe(document.documentElement, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-            attributes: true,
-            attributeFilter: ['title']
-        });
-
-        updateTitle();
-    }
-
-    startObserver();
-
-    // Handle Instagram SPA navigation
-    let lastURL = location.href;
-
-    setInterval(() => {
-        if (location.href !== lastURL) {
-            lastURL = location.href;
-            lastTitle = '';
-        }
-
-        updateTitle();
-    }, 250);
+    
+        startObserver();
+    
+        // Handle Instagram SPA navigation
+        let lastURL = location.href;
+    
+        setInterval(() => {
+            if (location.href !== lastURL) {
+                lastURL = location.href;
+                lastTitle = '';
+            }
+    
+            updateTitle();
+        }, 250);
     }
 
 // ---- addons/shared-media/script.js ----
@@ -665,6 +680,594 @@
 
         return items;
     }
+
+// ---- addons/float/init.js ----
+    const Float = {
+        isFloatWindow:
+            window.name.startsWith('float:'),
+        button: null,
+        windows: new Map(),
+        windowPrefix: 'float:',
+
+        init() {
+            if (this.isFloatWindow) {
+                this.initFloatWindow();
+                return;
+            }
+            this.initMainWindow();
+        },
+
+
+// ---- addons/float/mainwindow.js ----
+
+        initMainWindow() {
+            const observer =
+                new MutationObserver(() => {
+                    this.injectButton();
+                });
+            const start = () => {
+                observer.observe(
+                    document.documentElement,
+                    {
+                        childList: true,
+                        subtree: true
+                    }
+                );
+                this.injectButton();
+            };
+            if (
+                document.readyState ===
+                'loading'
+            ) {
+                document.addEventListener(
+                    'DOMContentLoaded',
+                    start,
+                    { once: true }
+                );
+            } else {
+                start();
+            }
+        },
+
+// ---- addons/float/convo.js ----
+        getConversation() {
+            const url =
+                location.href;
+            if (
+                !url.includes(
+                    '/direct/'
+                )
+            ) {
+                return null;
+            }
+            const parsed =
+                new URL(url);
+            parsed.searchParams.delete(
+                'float'
+            );
+            return {
+                url: parsed.href,
+                id: this.getConversationId(parsed)
+            };
+        },
+
+        getConversationId(url) {
+            const match =
+                url.pathname.match(
+                    /\/direct\/t\/([^/]+)/
+                );
+            if (match)
+                return match[1];
+            return url.href;
+        },
+
+// ---- addons/float/button.js ----
+        injectButton() {
+            if (this.isFloatWindow)
+                return;
+            const infoIcon =
+                document.querySelector(
+                    'svg[aria-label="Conversation information"]'
+                );
+            if (!infoIcon)
+                return;
+            const infoButton =
+                infoIcon.closest(
+                    '[role="button"]'
+                );
+            if (!infoButton)
+                return;
+            const container =
+                infoButton.parentElement;
+            if (!container)
+                return;
+            if (
+                container.querySelector(
+                    '[data-float-button="true"]'
+                )
+            ) {
+                return;
+            }
+            const audioButton =
+                container.querySelector(
+                    'svg[aria-label="Audio call"]'
+                )?.closest(
+                    '[role="button"]'
+                );
+            if (!audioButton)
+                return;
+            const button =
+                infoButton.cloneNode(true);
+            button.dataset.floatButton =
+                'true';
+            button.setAttribute(
+                'aria-label',
+                'Float conversation'
+            );
+            button.setAttribute(
+                'title',
+                'Float conversation'
+            );
+
+            const svg =
+                button.querySelector(
+                    'svg'
+                );
+            if (!svg)
+                return;
+            svg.setAttribute(
+                'aria-label',
+                'Float conversation'
+            );
+            svg.innerHTML = `
+                <title>Float conversation</title>
+                <path
+                    d="M14 5h5v5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                />
+                <path
+                    d="M19 5l-7 7"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                />
+                <path
+                    d="M19 13v4a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                />
+            `;
+
+            button.removeAttribute(
+                'data-testid'
+            );
+            button.addEventListener(
+                'click',
+                event => {
+
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    this.openFloat();
+
+                },
+                true
+            );
+            container.insertBefore(
+                button,
+                audioButton
+            );
+
+            this.button = button;
+
+            console.log(
+                '[Float] button injected'
+            );
+        },
+
+// ---- addons/float/window.js ----
+        openFloat() {
+
+            const conversation =
+                this.getConversation();
+
+            if (!conversation)
+                return;
+
+            const id =
+                conversation.id;
+
+            /*
+             * If this conversation is already floating,
+             * just focus it.
+             */
+
+            const existing =
+                this.windows.get(id);
+
+            if (
+                existing &&
+                !existing.closed
+            ) {
+                existing.focus();
+                return;
+            }
+
+            /*
+             * Give every float window its own name.
+             *
+             * window.name survives SPA navigation.
+             */
+
+            const windowName =
+                this.windowPrefix +
+                id;
+
+            /*
+             * Keep the actual Instagram URL.
+             *
+             * No iframe.
+             * No fake window.
+             * This is a genuine browser window.
+             */
+
+            const features = [
+                'popup=yes',
+                'width=720',
+                'height=820',
+                'resizable=yes',
+                'scrollbars=yes'
+            ].join(',');
+
+            const popup =
+                window.open(
+                    conversation.url,
+                    windowName,
+                    features
+                );
+
+            if (!popup)
+                return;
+
+            /*
+             * Store it so repeated clicks don't create
+             * another window for the same conversation.
+             */
+
+            this.windows.set(
+                id,
+                popup
+            );
+
+            /*
+             * Cleanup when it closes.
+             */
+
+            const cleanup =
+                setInterval(() => {
+
+                    if (popup.closed) {
+
+                        clearInterval(
+                            cleanup
+                        );
+
+                        this.windows.delete(
+                            id
+                        );
+                    }
+
+                }, 1000);
+
+            /*
+             * Focus immediately.
+             */
+
+            popup.focus();
+        },
+
+
+        /*
+         * =========================================================
+         * FLOAT WINDOW
+         * =========================================================
+         */
+
+        initFloatWindow() {
+
+            console.log(
+                '[Float] floating window'
+            );
+
+            /*
+             * Set the marker explicitly.
+             *
+             * This remains true even when Instagram
+             * changes routes internally.
+             */
+
+            document.documentElement
+                .dataset.floatWindow =
+                'true';
+
+            this.installFloatStyles();
+
+            /*
+             * Instagram is a SPA, so the actual UI can
+             * appear well after document-start.
+             */
+
+            const observer =
+                new MutationObserver(() => {
+
+                    this.applyFloatLayout();
+
+                });
+
+            const start = () => {
+
+                observer.observe(
+                    document.documentElement,
+                    {
+                        childList: true,
+                        subtree: true
+                    }
+                );
+
+                this.applyFloatLayout();
+
+            };
+
+            if (
+                document.readyState ===
+                'loading'
+            ) {
+                document.addEventListener(
+                    'DOMContentLoaded',
+                    start,
+                    { once: true }
+                );
+            } else {
+                start();
+            }
+
+            /*
+             * React can replace large portions of the
+             * page without changing our <style>.
+             *
+             * Keep the title updated too.
+             */
+
+            setInterval(() => {
+
+                this.applyFloatLayout();
+
+                this.updateFloatTitle();
+
+            }, 1000);
+        },
+
+// ---- addons/float/style.js ----
+        installFloatStyles() {
+
+            if (
+                document.getElementById(
+                    'float-addon-style'
+                )
+            ) {
+                return;
+            }
+
+            const style =
+                document.createElement(
+                    'style'
+                );
+
+            style.id =
+                'float-addon-style';
+
+            style.textContent = `
+                html[data-float-window="true"] {
+                    overflow: hidden !important;
+                }
+                html[data-float-window="true"]
+                nav {
+                    display: none !important;
+                }
+                html[data-float-window="true"]
+                textarea[placeholder="Message..."] {
+                    display: none !important;
+                }
+                html[data-float-window="true"]
+                textarea[placeholder="Message..."]
+                {
+                    display: none !important;
+                }
+                html[data-float-window="true"]
+                textarea[placeholder="Message..."]
+                {
+                    display: none !important;
+                }
+                html[data-float-window="true"]
+                body {
+                    min-width: 0 !important;
+                }
+
+            `;
+
+            document.head.appendChild(
+                style
+            );
+        },
+
+
+        /*
+         * =========================================================
+         * APPLY FLOAT LAYOUT
+         * =========================================================
+         */
+
+        applyFloatLayout() {
+
+            if (!this.isFloatWindow)
+                return;
+
+            /*
+             * Hide navigation.
+             */
+
+            document
+                .querySelectorAll('nav')
+                .forEach(nav => {
+
+                    nav.style.setProperty(
+                        'display',
+                        'none',
+                        'important'
+                    );
+
+                });
+
+            /*
+             * Hide the message composer by
+             * walking up from the textarea.
+             */
+
+            const textarea =
+                document.querySelector(
+                    'textarea[placeholder="Message..."]'
+                );
+
+            if (textarea) {
+
+                textarea.style.setProperty(
+                    'display',
+                    'none',
+                    'important'
+                );
+
+                /*
+                 * Walk upward to hide the composer
+                 * container without touching the
+                 * conversation itself.
+                 */
+
+                let parent =
+                    textarea.parentElement;
+
+                for (
+                    let i = 0;
+                    i < 6 && parent;
+                    i++
+                ) {
+
+                    /*
+                     * Stop if the parent becomes huge.
+                     * We don't want to accidentally hide
+                     * the whole conversation.
+                     */
+
+                    const rect =
+                        parent.getBoundingClientRect();
+
+                    if (
+                        rect.height > 150
+                    ) {
+                        break;
+                    }
+
+                    parent.style.setProperty(
+                        'display',
+                        'none',
+                        'important'
+                    );
+
+                    parent =
+                        parent.parentElement;
+                }
+            }
+
+        },
+
+// ---- addons/float/title.js ----
+        updateFloatTitle() {
+
+            if (!this.isFloatWindow)
+                return;
+
+            const name =
+                this.getChatName();
+
+            if (!name)
+                return;
+
+            document.title =
+                'Float — ' + name;
+        },
+
+
+        getChatName() {
+
+
+            const infoIcon =
+                document.querySelector(
+                    'svg[aria-label="Conversation information"]'
+                );
+
+            if (!infoIcon)
+                return null;
+
+            let node =
+                infoIcon.parentElement;
+
+            for (
+                let i = 0;
+                i < 8 && node;
+                i++
+            ) {
+
+                const text =
+                    node.innerText
+                        ?.trim();
+
+                if (
+                    text &&
+                    text.length > 0 &&
+                    text.length < 150
+                ) {
+
+                    const lines =
+                        text
+                            .split('\n')
+                            .map(
+                                x => x.trim()
+                            )
+                            .filter(Boolean);
+
+                    if (lines.length)
+                        return lines[0];
+                }
+
+                node =
+                    node.parentElement;
+            }
+
+            return null;
+        }
+    };
+
+
+// ---- addons/float/start.js ----
+ Float.init();
 
 // ---- end.js ----
 })();
