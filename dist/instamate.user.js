@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      1.6.08
+// @version      2.06.08
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -370,26 +370,22 @@
         const mediaNote = document.createElement('div');
         mediaNote.className = 'im-row-desc';
         mediaNote.style.padding = '0 18px 10px';
-        mediaNote.textContent = 'Only shows what\u2019s currently loaded. Scroll to the top of the chat for more, then reopen this.';
         const mediaGrid = document.createElement('div');
-        mediaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 18px 14px;';
-        panel.append(mediaTitle, mediaNote, mediaGrid);
+        mediaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 18px 10px;';
+        // Instagram's own brand red, full-width to read as part of the
+        // native settings surface rather than a bolted-on extension button.
+        const mediaClearCache = document.createElement('button');
+        mediaClearCache.textContent = 'Clear cache';
+        mediaClearCache.style.cssText = 'display:block;width:100%;margin:0 0 14px;padding:10px 18px;border:none;background:#ED4956;color:#fff;font-size:14px;font-weight:600;cursor:pointer;';
+        panel.append(mediaTitle, mediaNote, mediaGrid, mediaClearCache);
 
-        function refreshMedia() {
-            const inThread = location.pathname.startsWith('/direct/t/');
-            mediaTitle.classList.toggle('im-hidden', !inThread);
-            mediaNote.classList.toggle('im-hidden', !inThread);
-            mediaGrid.classList.toggle('im-hidden', !inThread);
-            if (!inThread) return;
-
+        function renderMediaItems() {
             const items = typeof im_collectSharedMedia === 'function' ? im_collectSharedMedia() : [];
             mediaGrid.innerHTML = '';
-            if (items.length === 0) {
-                mediaNote.textContent = 'Nothing loaded yet -- scroll up in the chat, then reopen this.';
-                return;
-            }
-            mediaNote.textContent = 'Only shows what\u2019s currently loaded. Scroll to the top of the chat for more, then reopen this.';
-            items.slice(0, 24).forEach((item) => {
+            mediaNote.textContent = items.length === 0
+                ? 'Nothing cached yet -- media appears here as you scroll through the chat.'
+                : `${items.length} item${items.length === 1 ? '' : 's'} cached.`;
+            items.forEach((item) => {
                 const thumb = document.createElement('a');
                 thumb.href = item.src || item.poster;
                 thumb.target = '_blank';
@@ -402,6 +398,25 @@
                 mediaGrid.append(thumb);
             });
         }
+
+        function refreshMedia() {
+            const inThread = location.pathname.startsWith('/direct/t/');
+            mediaTitle.classList.toggle('im-hidden', !inThread);
+            mediaNote.classList.toggle('im-hidden', !inThread);
+            mediaGrid.classList.toggle('im-hidden', !inThread);
+            mediaClearCache.classList.toggle('im-hidden', !inThread);
+            if (!inThread) return;
+            renderMediaItems();
+        }
+
+        // Cache persists across reloads (see im_clearMediaCacheForCurrentThread
+        // in the addon) -- this is the only way to reset it for the
+        // currently open chat.
+        mediaClearCache.addEventListener('click', () => {
+            if (typeof im_clearMediaCacheForCurrentThread === 'function') im_clearMediaCacheForCurrentThread();
+            renderMediaItems();
+        });
+
 
         const footer = document.createElement('div');
         footer.className = 'im-footer';
@@ -866,86 +881,80 @@
         return true;
     }
 
-    // ---- Auto-scroll history loader ----------------------------------------
+    // ---- Persistent per-thread cache ---------------------------------------
     //
-    // Instagram only renders messages that have scrolled into view and
-    // lazy-loads older ones as you scroll up -- normally that means the
-    // gallery only ever sees whatever the person happened to have scrolled
-    // through already. Since manually scrolling isn't always practical,
-    // this drives the *real* message thread's own scroll container to the
-    // top repeatedly, letting Instagram's own lazy-load kick in each time,
-    // until either the content stops growing (reached the start of the
-    // conversation) or a round cap sized for roughly 200 messages is hit --
-    // whichever comes first.
+    // Instagram virtualizes the message list -- once a message scrolls far
+    // enough out of view, its DOM node (and any image inside it) gets
+    // unmounted entirely, not just hidden. A plain re-scan of the live DOM
+    // would "lose" media that was found a moment ago just because the
+    // person scrolled past it. This cache accumulates everything ever found
+    // for a given thread instead, so items only ever get added, never
+    // dropped by scrolling.
+    //
+    // It's purely passive: there's no button that drives Instagram's own
+    // scroll container to force-load history (that turned out unreliable
+    // in practice -- Instagram's lazy-load didn't respond to programmatic
+    // scrolling here). Instead, the cache just keeps whatever's rendered
+    // each time this runs, growing naturally as the person scrolls the
+    // chat themselves in the course of normal use, and persists across
+    // page reloads via GM storage so it isn't lost either. A "Clear cache"
+    // button (src/core/ui.js) resets it for the current thread.
+    const IM_MEDIA_CACHE_PREFIX = 'instamate.sharedmedia.';
+    const IM_MEDIA_CACHE = new Map(); // threadPath -> Map(src -> item), in-memory mirror of GM storage for this session
 
-    // The message thread's scroll container is whichever scrollable element
-    // holds real content and isn't the conversation-list sidebar (that one
-    // is also scrollable, but it's a different container -- see
-    // im_findThreadListContainer above).
-    function im_findMessageScrollContainer() {
-        const threadList = im_findThreadListContainer();
-        const candidates = [...document.querySelectorAll('div')].filter((el) => {
-            const cs = getComputedStyle(el);
-            if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') return false;
-            return el.scrollHeight > el.clientHeight + 40; // actually has more content than fits
-        }).filter((el) => !(threadList && (threadList === el || threadList.contains(el) || el.contains(threadList))));
-
-        if (candidates.length === 0) return null;
-        // The message thread is virtually always the tallest/scrolliest
-        // candidate left once the sidebar is excluded.
-        candidates.sort((a, b) => b.scrollHeight - a.scrollHeight);
-        return candidates[0];
+    function im_mediaCacheKeyForCurrentThread() {
+        return IM_MEDIA_CACHE_PREFIX + location.pathname;
     }
 
-    let im_autoLoadRunning = false;
+    function im_mediaCacheForCurrentThread() {
+        const pathKey = location.pathname;
+        if (IM_MEDIA_CACHE.has(pathKey)) return IM_MEDIA_CACHE.get(pathKey);
 
-    // Rounds are sized generously for ~200 messages: Instagram typically
-    // renders a batch of a dozen-plus messages per lazy-load trigger, so 40
-    // rounds comfortably covers that range even on a slow-loading chat --
-    // but the plateau check below almost always stops it well before that,
-    // once there's nothing older left to load.
-    async function im_autoLoadHistory({ maxRounds = 40, onProgress } = {}) {
-        if (im_autoLoadRunning) return;
-        const container = im_findMessageScrollContainer();
-        if (!container) return;
-
-        im_autoLoadRunning = true;
-        let lastHeight = -1;
-        let stableRounds = 0;
-
-        try {
-            for (let i = 0; i < maxRounds; i++) {
-                container.scrollTop = 0;
-                // eslint-disable-next-line no-await-in-loop
-                await new Promise((resolve) => setTimeout(resolve, 500));
-
-                if (container.scrollHeight === lastHeight) {
-                    stableRounds++;
-                    if (stableRounds >= 2) break; // two flat rounds in a row -- nothing older left to load
-                } else {
-                    stableRounds = 0;
-                }
-                lastHeight = container.scrollHeight;
-                onProgress?.(i + 1, maxRounds);
+        const map = new Map();
+        if (im_gmAvailable()) {
+            try {
+                const stored = JSON.parse(GM_getValue(im_mediaCacheKeyForCurrentThread(), '[]'));
+                stored.forEach((item) => map.set(item.src || item.poster, item));
+            } catch {
+                /* corrupt/missing stored value -- start fresh */
             }
-        } finally {
-            im_autoLoadRunning = false;
+        }
+        IM_MEDIA_CACHE.set(pathKey, map);
+        return map;
+    }
+
+    function im_persistMediaCache(cache) {
+        if (!im_gmAvailable()) return;
+        try {
+            GM_setValue(im_mediaCacheKeyForCurrentThread(), JSON.stringify([...cache.values()]));
+        } catch {
+            /* storage unavailable/full -- cache still works for this session, just won't persist */
+        }
+    }
+
+    function im_clearMediaCacheForCurrentThread() {
+        IM_MEDIA_CACHE.set(location.pathname, new Map());
+        if (im_gmAvailable()) {
+            try {
+                GM_setValue(im_mediaCacheKeyForCurrentThread(), '[]');
+            } catch {
+                /* ignore */
+            }
         }
     }
 
     function im_collectSharedMedia() {
         if (!location.pathname.startsWith('/direct/t/')) return [];
 
+        const cache = im_mediaCacheForCurrentThread();
         const threadListContainer = im_findThreadListContainer();
-        const seen = new Set();
-        const items = [];
+        const sizeBefore = cache.size;
 
         document.querySelectorAll('img').forEach((img) => {
             if (!im_isLikelyAttachment(img, threadListContainer)) return;
             const src = img.currentSrc || img.src;
-            if (!src || seen.has(src)) return;
-            seen.add(src);
-            items.push({ type: 'image', src });
+            if (!src || cache.has(src)) return;
+            cache.set(src, { type: 'image', src });
         });
 
         document.querySelectorAll('video').forEach((video) => {
@@ -955,13 +964,82 @@
             const src = video.currentSrc || video.src || video.querySelector('source')?.src || '';
             const poster = video.poster || '';
             const key = src || poster;
-            if (!key || seen.has(key)) return;
+            if (!key || cache.has(key)) return;
             if (im_hostnameCategory(key) === 'sticker') return;
-            seen.add(key);
-            items.push({ type: 'video', src, poster });
+            cache.set(key, { type: 'video', src, poster });
         });
 
-        return items;
+        if (cache.size !== sizeBefore) im_persistMediaCache(cache);
+
+        return [...cache.values()];
+    }
+
+    // ---- Settings-popup section --------------------------------------------
+    //
+    // Registers this addon's own UI (media grid + Clear cache button) with
+    // the core settings popup instead of src/core/ui.js hardcoding it --
+    // see im_registerPanelSection there. Means this addon's UI lives
+    // entirely in this file: removing this addon (deleting this file from
+    // the build) removes its section from the popup automatically, no
+    // edits needed in ui.js.
+    if (typeof im_registerPanelSection === 'function') {
+        im_registerPanelSection({
+            mount(panel) {
+                const title = document.createElement('div');
+                title.className = 'im-section-title';
+                title.textContent = 'Shared Media \u2014 this chat';
+                const note = document.createElement('div');
+                note.className = 'im-row-desc';
+                note.style.padding = '0 18px 10px';
+                const grid = document.createElement('div');
+                grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 18px 10px;';
+                // Instagram's own brand red, full-width to read as part of
+                // the native settings surface rather than a bolted-on
+                // extension button.
+                const clearCacheBtn = document.createElement('button');
+                clearCacheBtn.textContent = 'Clear cache';
+                clearCacheBtn.style.cssText = 'display:block;width:100%;margin:0 0 14px;padding:10px 18px;border:none;background:#ED4956;color:#fff;font-size:14px;font-weight:600;cursor:pointer;';
+                panel.append(title, note, grid, clearCacheBtn);
+
+                function renderItems() {
+                    const items = im_collectSharedMedia();
+                    grid.innerHTML = '';
+                    note.textContent = items.length === 0
+                        ? 'Nothing cached yet -- media appears here as you scroll through the chat.'
+                        : `${items.length} item${items.length === 1 ? '' : 's'} cached.`;
+                    items.forEach((item) => {
+                        const thumb = document.createElement('a');
+                        thumb.href = item.src || item.poster;
+                        thumb.target = '_blank';
+                        thumb.rel = 'noopener noreferrer';
+                        thumb.style.cssText = 'display:block;aspect-ratio:1;border-radius:6px;overflow:hidden;background:rgba(0,0,0,.15);';
+                        const img = document.createElement('img');
+                        img.src = item.type === 'video' ? (item.poster || item.src) : item.src;
+                        img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+                        thumb.append(img);
+                        grid.append(thumb);
+                    });
+                }
+
+                // Cache persists across reloads (im_clearMediaCacheForCurrentThread
+                // above) -- this is the only way to reset it for the
+                // currently open chat.
+                clearCacheBtn.addEventListener('click', () => {
+                    im_clearMediaCacheForCurrentThread();
+                    renderItems();
+                });
+
+                return function refresh() {
+                    const inThread = location.pathname.startsWith('/direct/t/');
+                    title.classList.toggle('im-hidden', !inThread);
+                    note.classList.toggle('im-hidden', !inThread);
+                    grid.classList.toggle('im-hidden', !inThread);
+                    clearCacheBtn.classList.toggle('im-hidden', !inThread);
+                    if (!inThread) return;
+                    renderItems();
+                };
+            },
+        });
     }
 
 // ---- addons/selectionbugfix/script.js ----

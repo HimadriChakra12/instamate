@@ -241,26 +241,22 @@
         const mediaNote = document.createElement('div');
         mediaNote.className = 'im-row-desc';
         mediaNote.style.padding = '0 18px 10px';
-        mediaNote.textContent = 'Only shows what\u2019s currently loaded. Scroll to the top of the chat for more, then reopen this.';
         const mediaGrid = document.createElement('div');
-        mediaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 18px 14px;';
-        panel.append(mediaTitle, mediaNote, mediaGrid);
+        mediaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 18px 10px;';
+        // Instagram's own brand red, full-width to read as part of the
+        // native settings surface rather than a bolted-on extension button.
+        const mediaClearCache = document.createElement('button');
+        mediaClearCache.textContent = 'Clear cache';
+        mediaClearCache.style.cssText = 'display:block;width:100%;margin:0 0 14px;padding:10px 18px;border:none;background:#ED4956;color:#fff;font-size:14px;font-weight:600;cursor:pointer;';
+        panel.append(mediaTitle, mediaNote, mediaGrid, mediaClearCache);
 
-        function refreshMedia() {
-            const inThread = location.pathname.startsWith('/direct/t/');
-            mediaTitle.classList.toggle('im-hidden', !inThread);
-            mediaNote.classList.toggle('im-hidden', !inThread);
-            mediaGrid.classList.toggle('im-hidden', !inThread);
-            if (!inThread) return;
-
+        function renderMediaItems() {
             const items = typeof im_collectSharedMedia === 'function' ? im_collectSharedMedia() : [];
             mediaGrid.innerHTML = '';
-            if (items.length === 0) {
-                mediaNote.textContent = 'Nothing loaded yet -- scroll up in the chat, then reopen this.';
-                return;
-            }
-            mediaNote.textContent = 'Only shows what\u2019s currently loaded. Scroll to the top of the chat for more, then reopen this.';
-            items.slice(0, 24).forEach((item) => {
+            mediaNote.textContent = items.length === 0
+                ? 'Nothing cached yet -- media appears here as you scroll through the chat.'
+                : `${items.length} item${items.length === 1 ? '' : 's'} cached.`;
+            items.forEach((item) => {
                 const thumb = document.createElement('a');
                 thumb.href = item.src || item.poster;
                 thumb.target = '_blank';
@@ -273,6 +269,25 @@
                 mediaGrid.append(thumb);
             });
         }
+
+        function refreshMedia() {
+            const inThread = location.pathname.startsWith('/direct/t/');
+            mediaTitle.classList.toggle('im-hidden', !inThread);
+            mediaNote.classList.toggle('im-hidden', !inThread);
+            mediaGrid.classList.toggle('im-hidden', !inThread);
+            mediaClearCache.classList.toggle('im-hidden', !inThread);
+            if (!inThread) return;
+            renderMediaItems();
+        }
+
+        // Cache persists across reloads (see im_clearMediaCacheForCurrentThread
+        // in the addon) -- this is the only way to reset it for the
+        // currently open chat.
+        mediaClearCache.addEventListener('click', () => {
+            if (typeof im_clearMediaCacheForCurrentThread === 'function') im_clearMediaCacheForCurrentThread();
+            renderMediaItems();
+        });
+
 
         const footer = document.createElement('div');
         footer.className = 'im-footer';
