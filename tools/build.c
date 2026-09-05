@@ -14,7 +14,8 @@ listout(GRANT,
     "unsafeWindow",
     "GM_download",
     "GM_getValue",
-    "GM_setValue"
+    "GM_setValue",
+    "GM_registerMenuCommand"
     );
 
 /* Custom @tag lines that don't have a fixed build_meta_t field. */

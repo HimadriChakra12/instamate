@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      1.3.07
+// @version      1.4.07
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -9,6 +9,7 @@
 // @grant        GM_download
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @anonstoryview https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js
 // @reelsramsaver https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js
 // @msgname      Generated
@@ -119,7 +120,7 @@
     }
 
 // ---- core/ui.js ----
-    // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
     // Instamate core: settings popup
     //
     // Injects an Instagram-styled popup for switching opts on/off. The only
@@ -280,9 +281,23 @@
     // click now opens Instamate's settings instead of navigating home.
 
     function im_findInstagramHomeIcon() {
+        // The Instagram *logo* link (top of the sidebar) and the *Home* nav
+        // item are both `<a href="/">`, so matching on href alone grabs
+        // whichever comes first in the DOM -- which is the Home item, not
+        // the logo. Disambiguate by finding the anchor that wraps the
+        // "Instagram" logo svg specifically.
+        const logoSvg = document.querySelector('a[href="/"] svg[aria-label="Instagram" i]');
+        if (logoSvg) return logoSvg.closest('a[href="/"]');
+
+        // Fallback for markup variants where the svg has a <title> instead
+        // of an aria-label.
+        const byTitle = [...document.querySelectorAll('a[href="/"]')].find((a) =>
+            a.querySelector('svg title')?.textContent?.trim().toLowerCase() === 'instagram'
+        );
+        if (byTitle) return byTitle;
+
         return (
-            document.querySelector('a[href="/"][role="link"]') ||
-            document.querySelector('a[aria-label="Home" i][href="/"]') ||
+            document.querySelector('a[aria-label="Instagram" i][href="/"]') ||
             document.querySelector('a[href="/"]')
         );
     }
