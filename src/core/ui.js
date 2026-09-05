@@ -180,17 +180,16 @@
         );
     }
 
-    let im_sidebarMounted = false;
-
+    // Instagram's SPA re-renders the sidebar on navigation, swapping in a
+    // brand-new <a> node with none of our hijack markers or listener. A
+    // one-shot "mounted" flag would miss that entirely and never recover --
+    // so this checks the *current* node's own dataset every call instead of
+    // a global flag, and it's meant to be called repeatedly for the life of
+    // the page (see the observer below), not just until the first success.
     function im_tryMountSidebarItem(onClick) {
-        if (im_sidebarMounted) return true;
-
         const el = im_findInstagramHomeIcon();
         if (!el) return false;
-        if (el.dataset.instamateHijacked) {
-            im_sidebarMounted = true;
-            return true;
-        }
+        if (el.dataset.instamateHijacked) return true;
 
         el.dataset.instamateHijacked = '1';
         el.setAttribute('aria-label', 'Instamate settings');
@@ -202,7 +201,6 @@
             onClick();
         }, { capture: true });
 
-        im_sidebarMounted = true;
         return true;
     }
 
@@ -336,15 +334,9 @@
         im_tryMountSidebarItem(() => im_openSettings && im_openSettings());
     }
 
-    // Sidebar renders after Instagram's own app has hydrated, so keep
-    // retrying to take over its icon for a while. The Tampermonkey menu
-    // command below always works regardless, as a guaranteed fallback.
     im_mountUI();
-    const im_sidebarRetry = setInterval(() => {
-        im_mountUI();
-        if (im_sidebarMounted) clearInterval(im_sidebarRetry);
-    }, 1000);
-    setTimeout(() => clearInterval(im_sidebarRetry), 30000);
+    const im_sidebarObserver = new MutationObserver(() => im_mountUI());
+    im_sidebarObserver.observe(document.documentElement, { childList: true, subtree: true });
 
     if (typeof GM_registerMenuCommand === 'function') {
         GM_registerMenuCommand('\u2699\ufe0f Settings', () => {
