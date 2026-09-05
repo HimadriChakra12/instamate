@@ -1,4 +1,4 @@
-    // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
     // Instamate core: settings + registry
     //
     // Everything below concatenates into one IIFE, so this `IM` object is just
@@ -52,14 +52,14 @@
             description: "Stops Instagram from recording that you viewed someone's story.",
         },
         {
-            key: 'reelsramsaver',
-            label: 'Reels RAM Saver',
-            description: 'Unloads off-screen Reels videos so long scrolling sessions stay light on memory.',
-        },
-        {
             key: 'msgname',
             label: 'DM Tab Title',
             description: "Shows who you're messaging in the browser tab title instead of just \"Instagram\".",
+        },
+        {
+            key: 'float',
+            label: 'Float',
+            description: 'Get floating windowed chats',
         },
     ];
 
@@ -72,9 +72,9 @@
             description: 'Adds a grid of this chat\u2019s photos/videos to the settings popup \u2014 the gallery view web is missing versus the mobile app.',
         },
         {
-            key: 'float',
-            label: 'Float',
-            description: 'Get floating windowed chats',
+            key: 'reelsramsaver',
+            label: 'Reels RAM Saver',
+            description: 'Unloads off-screen Reels videos so long scrolling sessions stay light on memory.',
         },
         {
             key: 'selectionbugfix',

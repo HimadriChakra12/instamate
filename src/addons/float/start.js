@@ -1,1 +1,3 @@
- Float.init();
+if (IM.isEnabled('float')) {
+    Float.init();
+}
