@@ -151,6 +151,22 @@
         return false;
     }
 
+    // Reels shared into a chat use the same role="button" + bare-profile-
+    // link card structure as shared posts, but always carry one extra,
+    // very specific tell: an overlay svg labeled "Clip" (Instagram's own
+    // internal name for a Reel) on top of the thumbnail. Checking for that
+    // directly is more reliable than leaning on im_isSharedPostCard alone,
+    // since a reel share doesn't always have caption text below it the way
+    // a post share does.
+    function im_isReelShareCard(img) {
+        let node = img.closest('div');
+        for (let i = 0; i < 4 && node; i++) {
+            if (node.querySelector('svg[aria-label="Clip" i]')) return true;
+            node = node.parentElement;
+        }
+        return false;
+    }
+
     function im_isChatListPreviewRow(img) {
         let node = img.closest('div');
         for (let i = 0; i < 6 && node; i++) {
@@ -166,6 +182,7 @@
         if (threadListContainer && threadListContainer.contains(img)) return false; // other conversations' previews
         if (im_isChatListPreviewRow(img)) return false; // conversation-list row that slipped past the container check
         if (im_isSharedPostCard(img)) return false; // forwarded post/reel card, not a raw sent photo
+        if (im_isReelShareCard(img)) return false; // shared reel (has the "Clip" overlay icon)
 
         const src = img.currentSrc || img.src;
         if (im_hostnameCategory(src) === 'sticker') return false;
@@ -194,6 +211,73 @@
         if (img.closest('[aria-label*="sticker" i], [aria-label*="reaction" i]')) return false;
 
         return true;
+    }
+
+    // ---- Auto-scroll history loader ----------------------------------------
+    //
+    // Instagram only renders messages that have scrolled into view and
+    // lazy-loads older ones as you scroll up -- normally that means the
+    // gallery only ever sees whatever the person happened to have scrolled
+    // through already. Since manually scrolling isn't always practical,
+    // this drives the *real* message thread's own scroll container to the
+    // top repeatedly, letting Instagram's own lazy-load kick in each time,
+    // until either the content stops growing (reached the start of the
+    // conversation) or a round cap sized for roughly 200 messages is hit --
+    // whichever comes first.
+
+    // The message thread's scroll container is whichever scrollable element
+    // holds real content and isn't the conversation-list sidebar (that one
+    // is also scrollable, but it's a different container -- see
+    // im_findThreadListContainer above).
+    function im_findMessageScrollContainer() {
+        const threadList = im_findThreadListContainer();
+        const candidates = [...document.querySelectorAll('div')].filter((el) => {
+            const cs = getComputedStyle(el);
+            if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') return false;
+            return el.scrollHeight > el.clientHeight + 40; // actually has more content than fits
+        }).filter((el) => !(threadList && (threadList === el || threadList.contains(el) || el.contains(threadList))));
+
+        if (candidates.length === 0) return null;
+        // The message thread is virtually always the tallest/scrolliest
+        // candidate left once the sidebar is excluded.
+        candidates.sort((a, b) => b.scrollHeight - a.scrollHeight);
+        return candidates[0];
+    }
+
+    let im_autoLoadRunning = false;
+
+    // Rounds are sized generously for ~200 messages: Instagram typically
+    // renders a batch of a dozen-plus messages per lazy-load trigger, so 40
+    // rounds comfortably covers that range even on a slow-loading chat --
+    // but the plateau check below almost always stops it well before that,
+    // once there's nothing older left to load.
+    async function im_autoLoadHistory({ maxRounds = 40, onProgress } = {}) {
+        if (im_autoLoadRunning) return;
+        const container = im_findMessageScrollContainer();
+        if (!container) return;
+
+        im_autoLoadRunning = true;
+        let lastHeight = -1;
+        let stableRounds = 0;
+
+        try {
+            for (let i = 0; i < maxRounds; i++) {
+                container.scrollTop = 0;
+                // eslint-disable-next-line no-await-in-loop
+                await new Promise((resolve) => setTimeout(resolve, 500));
+
+                if (container.scrollHeight === lastHeight) {
+                    stableRounds++;
+                    if (stableRounds >= 2) break; // two flat rounds in a row -- nothing older left to load
+                } else {
+                    stableRounds = 0;
+                }
+                lastHeight = container.scrollHeight;
+                onProgress?.(i + 1, maxRounds);
+            }
+        } finally {
+            im_autoLoadRunning = false;
+        }
     }
 
     function im_collectSharedMedia() {
