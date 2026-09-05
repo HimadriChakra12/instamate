@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      1.6.07
+// @version      1.6.08
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -12,6 +12,8 @@
 // @grant        GM_registerMenuCommand
 // @anonstoryview https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js
 // @reelsramsaver https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js
+// @selectionbugfix https://greasyfork.org/pt-BR/scripts/470382-instagram-close-fix
+// @shared-media Generated
 // @msgname      Generated
 // @float        Generated
 // @run-at       document-start
@@ -96,9 +98,14 @@
             description: 'Adds a grid of this chat\u2019s photos/videos to the settings popup \u2014 the gallery view web is missing versus the mobile app.',
         },
         {
-            key: 'idviewer',
-            label: 'Instagram ID Viewer',
-            description: 'View ID of user instagram',
+            key: 'float',
+            label: 'Float',
+            description: 'Get floating windowed chats',
+        },
+        {
+            key: 'selectionbugfix',
+            label: 'Instagram Close Fix',
+            description: 'work around, for the instagram bug to select elements when closing the post',
         },
     ];
 
@@ -956,6 +963,19 @@
 
         return items;
     }
+
+// ---- addons/selectionbugfix/script.js ----
+	const events = ['pointerdown', 'pointerup'];
+	events.forEach((event) => addEvent(event));
+
+	function addEvent(event) {
+		document.addEventListener(event, (e) => {
+			if (!e.target.closest('.x1qjc9v5.x9f619.x78zum5.xdt5ytf.x1iyjqo2.xl56j7k')) return;
+			e.preventDefault();
+			e.stopPropagation();
+			document.querySelector('[role="button"]:has([points="20.643 3.357 12 12 3.353 20.647"])').click();
+		});
+	}
 
 // ---- addons/float/init.js ----
     const Float = {

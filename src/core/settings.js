@@ -72,9 +72,14 @@
             description: 'Adds a grid of this chat\u2019s photos/videos to the settings popup \u2014 the gallery view web is missing versus the mobile app.',
         },
         {
-            key: 'idviewer',
-            label: 'Instagram ID Viewer',
-            description: 'View ID of user instagram',
+            key: 'float',
+            label: 'Float',
+            description: 'Get floating windowed chats',
+        },
+        {
+            key: 'selectionbugfix',
+            label: 'Instagram Close Fix',
+            description: 'work around, for the instagram bug to select elements when closing the post',
         },
     ];
 
