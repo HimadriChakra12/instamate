@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      2.07.08
+// @version      3.07.08
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -1055,588 +1055,408 @@
 		});
 	}
 
-// ---- addons/float/init.js ----
+// ---- addons/security/core.js ----
+// ---------------------------------------------------------------------------
+    // Security / Anti-Telemetry (opt -- see src/core/settings.js IM_OPTS)
+    //
+    // Instagram reports an enormous amount of client-side telemetry: event
+    // batches, experiment/feature-flag exposure logging, performance and
+    // error reporting, and tracking pixels -- most of it fired via
+    // navigator.sendBeacon or background fetch/XHR calls that don't affect
+    // anything you see on screen. This addon cuts that down without
+    // touching the actual app functionality (messaging, feed, GraphQL
+    // calls that the page needs a real response from all still work
+    // normally).
+    //
+    // Structured like the Float addon: this file (core.js) defines the
+    // shared `Security` object; the other files in this folder each attach
+    // one method to it; launch.js kicks it off behind the opt's
+    // isEnabled() check.
+    //
+    // Deliberately conservative: only sendBeacon (which by definition is
+    // "fire and forget" reporting, never something the page waits on) and a
+    // specific, named list of known telemetry/analytics URL patterns are
+    // blocked. Nothing that looks like a real GraphQL/API call the app
+    // might depend on gets touched. If something breaks, turn this opt off
+    // in the settings popup -- it takes effect after a reload.
+    const Security = {
+        blockedBeaconCount: 0,
+        blockedRequestCount: 0,
+
+        init() {
+            this.blockBeacons();
+            this.blockTelemetryRequests();
+            this.stripTrackingParams();
+        },
+    };
+
+// ---- addons/security/beacon.js ----
+// navigator.sendBeacon exists specifically for "send this and don't
+    // wait for a response, even if the page is about to unload" -- that's
+    // exactly the shape of analytics/telemetry reporting and never
+    // something real app functionality depends on getting a reply from.
+    // Instagram fires it constantly (page-leave events, engagement pings,
+    // performance samples). Stubbing it to a no-op that reports success
+    // (so calling code doesn't retry via a fallback path) silently drops
+    // all of it.
+    Security.blockBeacons = function blockBeacons() {
+        if (!navigator.sendBeacon) return;
+
+        const original = navigator.sendBeacon.bind(navigator);
+        navigator.sendBeacon = (url, data) => {
+            Security.blockedBeaconCount++;
+            // Uncomment for debugging which endpoints get hit:
+            // console.log('[Instamate Security] blocked beacon:', url);
+            void original; // kept for reference, intentionally never called
+            return true; // report success so callers don't fall back to fetch/XHR instead
+        };
+    };
+
+// ---- addons/security/network.js ----
+// Named, specific telemetry/analytics URL patterns -- deliberately not
+    // a broad "block anything with /graphql/ or /api/" rule, since
+    // Instagram's actual functionality (messages, feed, everything) runs
+    // over those same endpoints. Only patterns known to be pure logging/
+    // experiment-exposure/error-reporting traffic are listed here.
+    const IM_SECURITY_BLOCKED_PATTERNS = [
+        /\/ajax\/bz/i, // Meta's batched client-event logging endpoint
+        /\/logging_client_events/i,
+        /\/api\/v1\/qe\/expose/i, // experiment/feature-flag exposure logging
+        /\/quality_data/i,
+        /connect\.facebook\.net\/.+\/fbevents\.js/i, // Meta Pixel script
+        /facebook\.com\/tr\b/i, // Meta Pixel tracking-pixel endpoint
+        /\/api\/v1\/wearable_devices\/data_export/i,
+    ];
+
+    function im_isBlockedTelemetryUrl(url) {
+        const str = typeof url === 'string' ? url : url?.toString?.() || '';
+        return IM_SECURITY_BLOCKED_PATTERNS.some((pattern) => pattern.test(str));
+    }
+
+    Security.blockTelemetryRequests = function blockTelemetryRequests() {
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = (input, init) => {
+            const url = typeof input === 'string' ? input : input?.url;
+            if (im_isBlockedTelemetryUrl(url)) {
+                Security.blockedRequestCount++;
+                // Resolve with an empty, successful-looking response rather
+                // than rejecting -- Instagram's own reporting code
+                // generally no-ops on a 204 rather than treating it as an
+                // error worth retrying or logging.
+                return Promise.resolve(new Response(null, { status: 204 }));
+            }
+            return originalFetch(input, init);
+        };
+
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function open(method, url, ...rest) {
+            if (im_isBlockedTelemetryUrl(url)) {
+                Security.blockedRequestCount++;
+                this.im_blocked = true;
+            }
+            return originalOpen.call(this, method, url, ...rest);
+        };
+
+        const originalSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function send(...args) {
+            if (this.im_blocked) return undefined; // never actually dispatched
+            return originalSend.apply(this, args);
+        };
+    };
+
+// ---- addons/security/tracking-params.js ----
+// Click-id style tracking params (fbclid, igshid, etc.) exist purely so
+    // Meta can attribute where a visit came from -- they don't affect
+    // anything the page does. Stripped via history.replaceState so it
+    // doesn't trigger a navigation/reload, just cleans up the address bar
+    // and stops the value from sitting in browser history.
+    const IM_TRACKING_PARAMS = ['fbclid', 'igshid', 'igsh', 'mibextid'];
+
+    Security.stripTrackingParams = function stripTrackingParams() {
+        const strip = () => {
+            const url = new URL(location.href);
+            let changed = false;
+            IM_TRACKING_PARAMS.forEach((param) => {
+                if (url.searchParams.has(param)) {
+                    url.searchParams.delete(param);
+                    changed = true;
+                }
+            });
+            if (changed) history.replaceState(history.state, '', url.toString());
+        };
+
+        strip();
+        // Instagram is an SPA -- re-check after navigation events rather
+        // than only once on initial load.
+        window.addEventListener('popstate', strip);
+        const originalPushState = history.pushState.bind(history);
+        history.pushState = (...args) => {
+            originalPushState(...args);
+            strip();
+        };
+    };
+
+// ---- addons/security/launch.js ----
+if (IM.isEnabled('security')) {
+    Security.init();
+}
+
+// ---- addons/float/core.js ----
+// ---------------------------------------------------------------------------
+    // Float (opt -- see src/core/settings.js IM_OPTS)
+    //
+    // Pops a DM conversation out into its own real browser window (not an
+    // iframe) so you can keep chatting while browsing the rest of
+    // Instagram. Two modes share this one `Float` object:
+    //   - Main window: injects a "Float conversation" button next to the
+    //     info/call icons in an open DM, which opens the float window.
+    //   - Float window: the popped-out window itself, identified by its
+    //     window.name starting with "float:" (survives Instagram's SPA
+    //     navigation, unlike a URL param would). It strips down to just
+    //     the conversation view -- no sidebar, no composer chrome beyond
+    //     what's needed -- and keeps its own tab title in sync.
+    //
+    // Files in this folder, each attaching methods to this same object:
+    //   core.js (this file)  - skeleton + init/initMainWindow
+    //   conversation.js      - reading which conversation is open
+    //   button.js            - injecting the float button in the main window
+    //   window.js            - opening/tracking float popup windows
+    //   style.js             - float window's stripped-down layout
+    //   title.js             - float window's tab title
+    //   launch.js            - kicks off Float.init() behind the opt toggle
     const Float = {
-        isFloatWindow:
-            window.name.startsWith('float:'),
+        isFloatWindow: window.name.startsWith('float:'),
+        windowPrefix: 'float:',
         button: null,
         windows: new Map(),
-        windowPrefix: 'float:',
 
         init() {
             if (this.isFloatWindow) {
                 this.initFloatWindow();
-                return;
+            } else {
+                this.initMainWindow();
             }
-            this.initMainWindow();
         },
 
-
-// ---- addons/float/mainwindow.js ----
-
+        // Main window: watch for DOM changes and (re-)inject the float
+        // button whenever Instagram re-renders the conversation header.
         initMainWindow() {
-            const observer =
-                new MutationObserver(() => {
-                    this.injectButton();
-                });
             const start = () => {
-                observer.observe(
-                    document.documentElement,
-                    {
-                        childList: true,
-                        subtree: true
-                    }
-                );
+                new MutationObserver(() => this.injectButton())
+                    .observe(document.documentElement, { childList: true, subtree: true });
                 this.injectButton();
             };
-            if (
-                document.readyState ===
-                'loading'
-            ) {
-                document.addEventListener(
-                    'DOMContentLoaded',
-                    start,
-                    { once: true }
-                );
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', start, { once: true });
             } else {
                 start();
             }
         },
+    };
 
 // ---- addons/float/convo.js ----
-        getConversation() {
-            const url =
-                location.href;
-            if (
-                !url.includes(
-                    '/direct/'
-                )
-            ) {
-                return null;
-            }
-            const parsed =
-                new URL(url);
-            parsed.searchParams.delete(
-                'float'
-            );
-            return {
-                url: parsed.href,
-                id: this.getConversationId(parsed)
-            };
-        },
+Float.getConversation = function getConversation() {
+        if (!location.href.includes('/direct/')) return null;
 
-        getConversationId(url) {
-            const match =
-                url.pathname.match(
-                    /\/direct\/t\/([^/]+)/
-                );
-            if (match)
-                return match[1];
-            return url.href;
-        },
+        const parsed = new URL(location.href);
+        parsed.searchParams.delete('float');
+
+        return { url: parsed.href, id: this.getConversationId(parsed) };
+    };
+
+    Float.getConversationId = function getConversationId(url) {
+        const match = url.pathname.match(/\/direct\/t\/([^/]+)/);
+        return match ? match[1] : url.href;
+    };
 
 // ---- addons/float/button.js ----
-        injectButton() {
-            if (this.isFloatWindow)
-                return;
-            const infoIcon =
-                document.querySelector(
-                    'svg[aria-label="Conversation information"]'
-                );
-            if (!infoIcon)
-                return;
-            const infoButton =
-                infoIcon.closest(
-                    '[role="button"]'
-                );
-            if (!infoButton)
-                return;
-            const container =
-                infoButton.parentElement;
-            if (!container)
-                return;
-            if (
-                container.querySelector(
-                    '[data-float-button="true"]'
-                )
-            ) {
-                return;
-            }
-            const audioButton =
-                container.querySelector(
-                    'svg[aria-label="Audio call"]'
-                )?.closest(
-                    '[role="button"]'
-                );
-            if (!audioButton)
-                return;
-            const button =
-                infoButton.cloneNode(true);
-            button.dataset.floatButton =
-                'true';
-            button.setAttribute(
-                'aria-label',
-                'Float conversation'
-            );
-            button.setAttribute(
-                'title',
-                'Float conversation'
-            );
+Float.injectButton = function injectButton() {
+        if (this.isFloatWindow) return;
 
-            const svg =
-                button.querySelector(
-                    'svg'
-                );
-            if (!svg)
-                return;
-            svg.setAttribute(
-                'aria-label',
-                'Float conversation'
-            );
-            svg.innerHTML = `
-                <title>Float conversation</title>
-                <path
-                    d="M14 5h5v5"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                />
-                <path
-                    d="M19 5l-7 7"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                />
-                <path
-                    d="M19 13v4a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                />
-            `;
+        const infoIcon = document.querySelector('svg[aria-label="Conversation information"]');
+        const infoButton = infoIcon?.closest('[role="button"]');
+        const container = infoButton?.parentElement;
+        if (!container || container.querySelector('[data-float-button="true"]')) return;
 
-            button.removeAttribute(
-                'data-testid'
-            );
-            button.addEventListener(
-                'click',
-                event => {
+        const audioButton = container.querySelector('svg[aria-label="Audio call"]')?.closest('[role="button"]');
+        if (!audioButton) return;
 
-                    event.preventDefault();
-                    event.stopPropagation();
+        const button = infoButton.cloneNode(true);
+        button.dataset.floatButton = 'true';
+        button.removeAttribute('data-testid');
+        button.setAttribute('aria-label', 'Float conversation');
+        button.setAttribute('title', 'Float conversation');
 
-                    this.openFloat();
+        const svg = button.querySelector('svg');
+        if (!svg) return;
+        svg.setAttribute('aria-label', 'Float conversation');
+        svg.innerHTML = `
+            <title>Float conversation</title>
+            <path d="M14 5h5v5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+            <path d="M19 5l-7 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+            <path d="M19 13v4a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" />
+        `;
 
-                },
-                true
-            );
-            container.insertBefore(
-                button,
-                audioButton
-            );
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.openFloat();
+        }, true);
 
-            this.button = button;
-
-            console.log(
-                '[Float] button injected'
-            );
-        },
+        container.insertBefore(button, audioButton);
+        this.button = button;
+    };
 
 // ---- addons/float/window.js ----
-        openFloat() {
+// Opens (or focuses, if already open) a real browser window for the
+    // current conversation -- a genuine popup with Instagram's own URL,
+    // not an iframe.
+    Float.openFloat = function openFloat() {
+        const conversation = this.getConversation();
+        if (!conversation) return;
 
-            const conversation =
-                this.getConversation();
+        const { id, url } = conversation;
 
-            if (!conversation)
-                return;
+        // Already floating? Just focus it instead of opening a duplicate.
+        const existing = this.windows.get(id);
+        if (existing && !existing.closed) {
+            existing.focus();
+            return;
+        }
 
-            const id =
-                conversation.id;
+        // window.name (not a URL param) survives Instagram's SPA
+        // navigation, so this is how the float window recognizes itself
+        // in initFloatWindow.
+        const windowName = this.windowPrefix + id;
+        const features = 'popup=yes,width=720,height=820,resizable=yes,scrollbars=yes';
+        const popup = window.open(url, windowName, features);
+        if (!popup) return;
 
-            /*
-             * If this conversation is already floating,
-             * just focus it.
-             */
+        this.windows.set(id, popup);
 
-            const existing =
-                this.windows.get(id);
-
-            if (
-                existing &&
-                !existing.closed
-            ) {
-                existing.focus();
-                return;
+        const cleanup = setInterval(() => {
+            if (popup.closed) {
+                clearInterval(cleanup);
+                this.windows.delete(id);
             }
+        }, 1000);
 
-            /*
-             * Give every float window its own name.
-             *
-             * window.name survives SPA navigation.
-             */
+        popup.focus();
+    };
 
-            const windowName =
-                this.windowPrefix +
-                id;
+    // Float window: strip down the layout and keep re-applying it/the tab
+    // title, since Instagram's SPA can re-render large portions of the
+    // page (including replacing our <style> target nodes) at any time.
+    Float.initFloatWindow = function initFloatWindow() {
+        document.documentElement.dataset.floatWindow = 'true';
+        this.installFloatStyles();
 
-            /*
-             * Keep the actual Instagram URL.
-             *
-             * No iframe.
-             * No fake window.
-             * This is a genuine browser window.
-             */
+        const start = () => {
+            new MutationObserver(() => this.applyFloatLayout())
+                .observe(document.documentElement, { childList: true, subtree: true });
+            this.applyFloatLayout();
+        };
 
-            const features = [
-                'popup=yes',
-                'width=720',
-                'height=820',
-                'resizable=yes',
-                'scrollbars=yes'
-            ].join(',');
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', start, { once: true });
+        } else {
+            start();
+        }
 
-            const popup =
-                window.open(
-                    conversation.url,
-                    windowName,
-                    features
-                );
-
-            if (!popup)
-                return;
-
-            /*
-             * Store it so repeated clicks don't create
-             * another window for the same conversation.
-             */
-
-            this.windows.set(
-                id,
-                popup
-            );
-
-            /*
-             * Cleanup when it closes.
-             */
-
-            const cleanup =
-                setInterval(() => {
-
-                    if (popup.closed) {
-
-                        clearInterval(
-                            cleanup
-                        );
-
-                        this.windows.delete(
-                            id
-                        );
-                    }
-
-                }, 1000);
-
-            /*
-             * Focus immediately.
-             */
-
-            popup.focus();
-        },
-
-
-        /*
-         * =========================================================
-         * FLOAT WINDOW
-         * =========================================================
-         */
-
-        initFloatWindow() {
-
-            console.log(
-                '[Float] floating window'
-            );
-
-            /*
-             * Set the marker explicitly.
-             *
-             * This remains true even when Instagram
-             * changes routes internally.
-             */
-
-            document.documentElement
-                .dataset.floatWindow =
-                'true';
-
-            this.installFloatStyles();
-
-            /*
-             * Instagram is a SPA, so the actual UI can
-             * appear well after document-start.
-             */
-
-            const observer =
-                new MutationObserver(() => {
-
-                    this.applyFloatLayout();
-
-                });
-
-            const start = () => {
-
-                observer.observe(
-                    document.documentElement,
-                    {
-                        childList: true,
-                        subtree: true
-                    }
-                );
-
-                this.applyFloatLayout();
-
-            };
-
-            if (
-                document.readyState ===
-                'loading'
-            ) {
-                document.addEventListener(
-                    'DOMContentLoaded',
-                    start,
-                    { once: true }
-                );
-            } else {
-                start();
-            }
-
-            /*
-             * React can replace large portions of the
-             * page without changing our <style>.
-             *
-             * Keep the title updated too.
-             */
-
-            setInterval(() => {
-
-                this.applyFloatLayout();
-
-                this.updateFloatTitle();
-
-            }, 1000);
-        },
+        setInterval(() => {
+            this.applyFloatLayout();
+            this.updateFloatTitle();
+        }, 1000);
+    };
 
 // ---- addons/float/style.js ----
-        installFloatStyles() {
+// Injects the CSS that hides Instagram's sidebar/chrome inside the
+    // float window. These are Instagram's own generated class names, so
+    // they'll drift whenever Instagram ships a redesign -- there's no way
+    // around hardcoding them short of Instagram exposing stable hooks.
+    Float.installFloatStyles = function installFloatStyles() {
+        if (document.getElementById('float-addon-style')) return;
 
-            if (
-                document.getElementById(
-                    'float-addon-style'
-                )
-            ) {
-                return;
+        const style = document.createElement('style');
+        style.id = 'float-addon-style';
+        style.textContent = `
+            div[class="x9f619 x2lah0s x1nhvcw1 x1qjc9v5 xozqiw3 x1q0g3np x78zum5 x1iyjqo2 x5yr21d x1t2pt76 x1n2onr6 x1ja2u2z x1k6qp8s"] {
+                height: 100vh !important;
             }
-
-            const style =
-                document.createElement(
-                    'style'
-                );
-
-            style.id =
-                'float-addon-style';
-
-            style.textContent = `
-	                div[class="x9f619 x2lah0s x1nhvcw1 x1qjc9v5 xozqiw3 x1q0g3np x78zum5 x1iyjqo2 x5yr21d x1t2pt76 x1n2onr6 x1ja2u2z x1k6qp8s"]
-	                {
-	                	height: 100vh !important
-	                }
-	                .x132t2bv {
-	                	padding-inline-start: 0 !important;
-	                }
-                    div[class="x1qjc9v5 x972fbf x10w94by x1qhh985 x14e42zd x9f619 x78zum5 xdt5ytf x1iyjqo2 x5wqa0o xln7xf2 xk390pu xdj266r x14z9mp xat24cr x1lziwak x65f84u x1vq45kp xexx8yu xyri2b x18d9i69 x1c1uobl x1n2onr6 x11njtxf"],
-                    div[class="_aasi _aask _at8n"],
-                    div[class="x78zum5 x1q0g3np x1gslohp xwib8y2 x1yrsyyn"],
-                    section[class="x1qjc9v5 x972fbf x10w94by x1qhh985 x14e42zd x9f619 x78zum5 xdt5ytf x1iyjqo2 x5wqa0o xln7xf2 xk390pu xdj266r x14z9mp xat24cr x1lziwak x65f84u x1vq45kp xexx8yu xyri2b x18d9i69 x1c1uobl x1n2onr6 x11njtxf"],
-                    section[class="x78zum5 x1q0g3np x1gslohp xwib8y2 x1yrsyyn"],
-                    div[class="x78zum5 xdt5ytf x1iyjqo2 xs83m0k x2lwn1j xw2csxc x1odjw0f x1n2onr6 x12nagc"],
-                    div[class="x1yztbdb"],
-	                .x1n327nk.xeq5yr9.x1dr59a3.x1nhvcw1.x1oa3qoh.x1qjc9v5.xqjyukv.xdt5ytf.x2lah0s.x1c4vz4f.xryxfnj.x1plvlek.x13vifvy.xixxii4.xbiv7yw.x16uus16.x1ga7v0g.x15mokao.x78zum5.xjbqb8w.x9f619,
-	                .xvbhtw8.xf7dkkf.xv54qhq.x11njtxf.x1n2onr6.x18d9i69.xexx8yu.x1h3rv7z.x1lziwak.xat24cr.x14z9mp.xdj266r.xk390pu.x2lah0s.xdt5ytf.x78zum5.x9f619.x1qjc9v5,
-                    div[class="x1n2onr6 x1ja2u2z x78zum5 xdt5ytf xuphzoz xt5vzds x17quhge x1wggrwl x1u1lrf5 xvbhtw8"],
-	                div[class="x1qjc9v5 x78zum5 x1q0g3np xl56j7k xh8yej3"],
-	                div[class="html-div xdj266r x14z9mp xat24cr x1lziwak xexx8yu xyri2b x18d9i69 x1c1uobl x9f619 xjbqb8w x78zum5 x15mokao x1ga7v0g x16uus16 xbiv7yw xixxii4 x1ey2m1c x1plvlek xryxfnj x1c4vz4f x2lah0s xdt5ytf xqjyukv x1qjc9v5 x1oa3qoh x1nhvcw1 xg7h5cd xh8yej3 xhtitgo x6w1myc x1jeouym"]
-	                {
-	                	display: none
-	                }
-            `;
-
-            document.head.appendChild(
-                style
-            );
-        },
-
-
-        /*
-         * =========================================================
-         * APPLY FLOAT LAYOUT
-         * =========================================================
-         */
-
-        applyFloatLayout() {
-
-            if (!this.isFloatWindow)
-                return;
-
-            /*
-             * Hide navigation.
-             */
-
-            document
-                .querySelectorAll('nav')
-                .forEach(nav => {
-
-                    nav.style.setProperty(
-                        'display',
-                        'none',
-                        'important'
-                    );
-
-                });
-
-            /*
-             * Hide the message composer by
-             * walking up from the textarea.
-             */
-
-            const textarea =
-                document.querySelector(
-                    'textarea[placeholder="Message..."]'
-                );
-
-            if (textarea) {
-
-                textarea.style.setProperty(
-                    'display',
-                    'none',
-                    'important'
-                );
-
-                /*
-                 * Walk upward to hide the composer
-                 * container without touching the
-                 * conversation itself.
-                 */
-
-                let parent =
-                    textarea.parentElement;
-
-                for (
-                    let i = 0;
-                    i < 6 && parent;
-                    i++
-                ) {
-
-                    /*
-                     * Stop if the parent becomes huge.
-                     * We don't want to accidentally hide
-                     * the whole conversation.
-                     */
-
-                    const rect =
-                        parent.getBoundingClientRect();
-
-                    if (
-                        rect.height > 150
-                    ) {
-                        break;
-                    }
-
-                    parent.style.setProperty(
-                        'display',
-                        'none',
-                        'important'
-                    );
-
-                    parent =
-                        parent.parentElement;
-                }
+            .x132t2bv {
+                padding-inline-start: 0 !important;
             }
-
-        },
-
-// ---- addons/float/title.js ----
-        updateFloatTitle() {
-
-            if (!this.isFloatWindow)
-                return;
-
-            const name =
-                this.getChatName();
-
-            if (!name)
-                return;
-
-            document.title =
-                'Float — ' + name;
-        },
-
-
-        getChatName() {
-
-
-            const infoIcon =
-                document.querySelector(
-                    'svg[aria-label="Conversation information"]'
-                );
-
-            if (!infoIcon)
-                return null;
-
-            let node =
-                infoIcon.parentElement;
-
-            for (
-                let i = 0;
-                i < 8 && node;
-                i++
-            ) {
-
-                const text =
-                    node.innerText
-                        ?.trim();
-
-                if (
-                    text &&
-                    text.length > 0 &&
-                    text.length < 150
-                ) {
-
-                    const lines =
-                        text
-                            .split('\n')
-                            .map(
-                                x => x.trim()
-                            )
-                            .filter(Boolean);
-
-                    if (lines.length)
-                        return lines[0];
-                }
-
-                node =
-                    node.parentElement;
+            div[class="x1qjc9v5 x972fbf x10w94by x1qhh985 x14e42zd x9f619 x78zum5 xdt5ytf x1iyjqo2 x5wqa0o xln7xf2 xk390pu xdj266r x14z9mp xat24cr x1lziwak x65f84u x1vq45kp xexx8yu xyri2b x18d9i69 x1c1uobl x1n2onr6 x11njtxf"],
+            div[class="_aasi _aask _at8n"],
+            div[class="x78zum5 x1q0g3np x1gslohp xwib8y2 x1yrsyyn"],
+            section[class="x1qjc9v5 x972fbf x10w94by x1qhh985 x14e42zd x9f619 x78zum5 xdt5ytf x1iyjqo2 x5wqa0o xln7xf2 xk390pu xdj266r x14z9mp xat24cr x1lziwak x65f84u x1vq45kp xexx8yu xyri2b x18d9i69 x1c1uobl x1n2onr6 x11njtxf"],
+            section[class="x78zum5 x1q0g3np x1gslohp xwib8y2 x1yrsyyn"],
+            div[class="x78zum5 xdt5ytf x1iyjqo2 xs83m0k x2lwn1j xw2csxc x1odjw0f x1n2onr6 x12nagc"],
+            div[class="x1yztbdb"],
+            .x1n327nk.xeq5yr9.x1dr59a3.x1nhvcw1.x1oa3qoh.x1qjc9v5.xqjyukv.xdt5ytf.x2lah0s.x1c4vz4f.xryxfnj.x1plvlek.x13vifvy.xixxii4.xbiv7yw.x16uus16.x1ga7v0g.x15mokao.x78zum5.xjbqb8w.x9f619,
+            .xvbhtw8.xf7dkkf.xv54qhq.x11njtxf.x1n2onr6.x18d9i69.xexx8yu.x1h3rv7z.x1lziwak.xat24cr.x14z9mp.xdj266r.xk390pu.x2lah0s.xdt5ytf.x78zum5.x9f619.x1qjc9v5,
+            div[class="x1n2onr6 x1ja2u2z x78zum5 xdt5ytf xuphzoz xt5vzds x17quhge x1wggrwl x1u1lrf5 xvbhtw8"],
+            div[class="x1qjc9v5 x78zum5 x1q0g3np xl56j7k xh8yej3"],
+            div[class="html-div xdj266r x14z9mp xat24cr x1lziwak xexx8yu xyri2b x18d9i69 x1c1uobl x9f619 xjbqb8w x78zum5 x15mokao x1ga7v0g x16uus16 xbiv7yw xixxii4 x1ey2m1c x1plvlek xryxfnj x1c4vz4f x2lah0s xdt5ytf xqjyukv x1qjc9v5 x1oa3qoh x1nhvcw1 xg7h5cd xh8yej3 xhtitgo x6w1myc x1jeouym"] {
+                display: none;
             }
+        `;
+        document.head.appendChild(style);
+    };
 
-            return null;
+    // Hides Instagram's nav and message composer inside the float window --
+    // walks up from the composer textarea rather than hardcoding a
+    // container class, stopping if a "container" gets suspiciously tall
+    // (150px) so it can't accidentally swallow the whole conversation.
+    Float.applyFloatLayout = function applyFloatLayout() {
+        if (!this.isFloatWindow) return;
+
+        document.querySelectorAll('nav').forEach((nav) => {
+            nav.style.setProperty('display', 'none', 'important');
+        });
+
+        const textarea = document.querySelector('textarea[placeholder="Message..."]');
+        if (!textarea) return;
+
+        textarea.style.setProperty('display', 'none', 'important');
+
+        let parent = textarea.parentElement;
+        for (let i = 0; i < 6 && parent; i++) {
+            if (parent.getBoundingClientRect().height > 150) break;
+            parent.style.setProperty('display', 'none', 'important');
+            parent = parent.parentElement;
         }
     };
 
+// ---- addons/float/title.js ----
+Float.updateFloatTitle = function updateFloatTitle() {
+        if (!this.isFloatWindow) return;
 
-// ---- addons/float/start.js ----
+        const name = this.getChatName();
+        if (name) document.title = 'Float \u2014 ' + name;
+    };
+
+    // Reads the chat name by walking up from the conversation-info icon
+    // and taking the first short, non-empty text line found -- Instagram
+    // doesn't expose a stable "chat name" element to read directly.
+    Float.getChatName = function getChatName() {
+        const infoIcon = document.querySelector('svg[aria-label="Conversation information"]');
+        if (!infoIcon) return null;
+
+        let node = infoIcon.parentElement;
+        for (let i = 0; i < 8 && node; i++) {
+            const text = node.innerText?.trim();
+            if (text && text.length > 0 && text.length < 150) {
+                const [firstLine] = text.split('\n').map((line) => line.trim()).filter(Boolean);
+                if (firstLine) return firstLine;
+            }
+            node = node.parentElement;
+        }
+        return null;
+    };
+
+// ---- addons/float/launch.js ----
 if (IM.isEnabled('float')) {
     Float.init();
 }

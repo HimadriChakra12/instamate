@@ -1,16 +1,16 @@
-#define BUILD_OUTPUT_FILE "dist/instamate.user.js"
+#define OUTFILE "dist/instamate.user.js"
 #include "build.h"
 
 #define NAME        "Instamate"
 #define NAMESPACE   "https://github.com/HimadriChakra12/Instamate"
 #define DESCRIPTION "A combination of multiple instagram userscripts"
 
-listout(MATCH,
+listmatch(
     "https://*.instagram.com/*",
     "https://*.instagram.com/direct/t/*",
     );
 
-listout(GRANT,
+listgrant(
     "unsafeWindow",
     "GM_download",
     "GM_getValue",
@@ -19,7 +19,7 @@ listout(GRANT,
     );
 
 /* Custom @tag lines that don't have a fixed build_meta_t field. */
-listtags(EXTRA,
+listextra(
     { "anonstoryview",   "https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js" },
     { "reelsramsaver",   "https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js" },
 //    { "pipinstavideocall",   "https://update.greasyfork.org/scripts/486404/pip%20insta%20video%20call.user.js" },
@@ -30,32 +30,55 @@ listtags(EXTRA,
     { "float",   "Generated" },
     );
 
+#define OPTS group( \
+    "src/opts/anonstoryview/script.js", \
+    "src/opts/reelsramsaver/script.js", \
+    "src/opts/msgname/script.js", \
+    )
+
+#define ADDON group( \
+    "src/addons/shared-media/script.js", \
+    "src/addons/selectionbugfix/script.js", \
+    )
+
+#define SECURITY group( \
+    "src/addons/security/core.js", \
+    "src/addons/security/beacon.js", \
+    "src/addons/security/network.js", \
+    "src/addons/security/tracking-params.js", \
+    "src/addons/security/launch.js", \
+    )
+
+#define FLOAT group( \
+    "src/addons/float/core.js", \
+    "src/addons/float/convo.js", \
+    "src/addons/float/button.js", \
+    "src/addons/float/window.js", \
+    "src/addons/float/style.js", \
+    "src/addons/float/title.js", \
+    "src/addons/float/launch.js", \
+    )
+
+#define TEMP grpup(\
+    "src/pipinstavideocall/script.js",  \
+    "src/storyviewersearch/script.js",  \
+    )
+
 /* Dependency order matters: namespace first, then core (settings before ui,
  * since ui reads the opt/addon manifests settings.js defines), then opts,
  * then addons, then end.js last. */
-listout(ORDER,
+listorder(
     "src/start.js",
     "src/core/settings.js",
     "src/core/ui.js",
-    "src/opts/anonstoryview/script.js",
-    "src/opts/reelsramsaver/script.js",
-    "src/opts/msgname/script.js",
-    "src/addons/shared-media/script.js",
-    "src/addons/selectionbugfix/script.js",
-    "src/addons/float/init.js",
-    "src/addons/float/mainwindow.js",
-    "src/addons/float/convo.js",
-    "src/addons/float/button.js",
-    "src/addons/float/window.js",
-    "src/addons/float/style.js",
-    "src/addons/float/title.js",
-    "src/addons/float/start.js",
-//    "src/pipinstavideocall/script.js",
-//    "src/storyviewersearch/script.js",
+    OPTS
+    ADDON
+    SECURITY
+    FLOAT
     "src/end.js",
     );
 
-declaremeta(META,
+declaremeta(
     .name = NAME,
     .namespace_ = NAMESPACE,
     .description = DESCRIPTION,

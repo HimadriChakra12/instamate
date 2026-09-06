@@ -1,30 +1,13 @@
-        getConversation() {
-            const url =
-                location.href;
-            if (
-                !url.includes(
-                    '/direct/'
-                )
-            ) {
-                return null;
-            }
-            const parsed =
-                new URL(url);
-            parsed.searchParams.delete(
-                'float'
-            );
-            return {
-                url: parsed.href,
-                id: this.getConversationId(parsed)
-            };
-        },
+Float.getConversation = function getConversation() {
+        if (!location.href.includes('/direct/')) return null;
 
-        getConversationId(url) {
-            const match =
-                url.pathname.match(
-                    /\/direct\/t\/([^/]+)/
-                );
-            if (match)
-                return match[1];
-            return url.href;
-        },
+        const parsed = new URL(location.href);
+        parsed.searchParams.delete('float');
+
+        return { url: parsed.href, id: this.getConversationId(parsed) };
+    };
+
+    Float.getConversationId = function getConversationId(url) {
+        const match = url.pathname.match(/\/direct\/t\/([^/]+)/);
+        return match ? match[1] : url.href;
+    };

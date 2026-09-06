@@ -1,180 +1,60 @@
-        openFloat() {
+// Opens (or focuses, if already open) a real browser window for the
+    // current conversation -- a genuine popup with Instagram's own URL,
+    // not an iframe.
+    Float.openFloat = function openFloat() {
+        const conversation = this.getConversation();
+        if (!conversation) return;
 
-            const conversation =
-                this.getConversation();
+        const { id, url } = conversation;
 
-            if (!conversation)
-                return;
+        // Already floating? Just focus it instead of opening a duplicate.
+        const existing = this.windows.get(id);
+        if (existing && !existing.closed) {
+            existing.focus();
+            return;
+        }
 
-            const id =
-                conversation.id;
+        // window.name (not a URL param) survives Instagram's SPA
+        // navigation, so this is how the float window recognizes itself
+        // in initFloatWindow.
+        const windowName = this.windowPrefix + id;
+        const features = 'popup=yes,width=720,height=820,resizable=yes,scrollbars=yes';
+        const popup = window.open(url, windowName, features);
+        if (!popup) return;
 
-            /*
-             * If this conversation is already floating,
-             * just focus it.
-             */
+        this.windows.set(id, popup);
 
-            const existing =
-                this.windows.get(id);
-
-            if (
-                existing &&
-                !existing.closed
-            ) {
-                existing.focus();
-                return;
+        const cleanup = setInterval(() => {
+            if (popup.closed) {
+                clearInterval(cleanup);
+                this.windows.delete(id);
             }
+        }, 1000);
 
-            /*
-             * Give every float window its own name.
-             *
-             * window.name survives SPA navigation.
-             */
+        popup.focus();
+    };
 
-            const windowName =
-                this.windowPrefix +
-                id;
+    // Float window: strip down the layout and keep re-applying it/the tab
+    // title, since Instagram's SPA can re-render large portions of the
+    // page (including replacing our <style> target nodes) at any time.
+    Float.initFloatWindow = function initFloatWindow() {
+        document.documentElement.dataset.floatWindow = 'true';
+        this.installFloatStyles();
 
-            /*
-             * Keep the actual Instagram URL.
-             *
-             * No iframe.
-             * No fake window.
-             * This is a genuine browser window.
-             */
+        const start = () => {
+            new MutationObserver(() => this.applyFloatLayout())
+                .observe(document.documentElement, { childList: true, subtree: true });
+            this.applyFloatLayout();
+        };
 
-            const features = [
-                'popup=yes',
-                'width=720',
-                'height=820',
-                'resizable=yes',
-                'scrollbars=yes'
-            ].join(',');
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', start, { once: true });
+        } else {
+            start();
+        }
 
-            const popup =
-                window.open(
-                    conversation.url,
-                    windowName,
-                    features
-                );
-
-            if (!popup)
-                return;
-
-            /*
-             * Store it so repeated clicks don't create
-             * another window for the same conversation.
-             */
-
-            this.windows.set(
-                id,
-                popup
-            );
-
-            /*
-             * Cleanup when it closes.
-             */
-
-            const cleanup =
-                setInterval(() => {
-
-                    if (popup.closed) {
-
-                        clearInterval(
-                            cleanup
-                        );
-
-                        this.windows.delete(
-                            id
-                        );
-                    }
-
-                }, 1000);
-
-            /*
-             * Focus immediately.
-             */
-
-            popup.focus();
-        },
-
-
-        /*
-         * =========================================================
-         * FLOAT WINDOW
-         * =========================================================
-         */
-
-        initFloatWindow() {
-
-            console.log(
-                '[Float] floating window'
-            );
-
-            /*
-             * Set the marker explicitly.
-             *
-             * This remains true even when Instagram
-             * changes routes internally.
-             */
-
-            document.documentElement
-                .dataset.floatWindow =
-                'true';
-
-            this.installFloatStyles();
-
-            /*
-             * Instagram is a SPA, so the actual UI can
-             * appear well after document-start.
-             */
-
-            const observer =
-                new MutationObserver(() => {
-
-                    this.applyFloatLayout();
-
-                });
-
-            const start = () => {
-
-                observer.observe(
-                    document.documentElement,
-                    {
-                        childList: true,
-                        subtree: true
-                    }
-                );
-
-                this.applyFloatLayout();
-
-            };
-
-            if (
-                document.readyState ===
-                'loading'
-            ) {
-                document.addEventListener(
-                    'DOMContentLoaded',
-                    start,
-                    { once: true }
-                );
-            } else {
-                start();
-            }
-
-            /*
-             * React can replace large portions of the
-             * page without changing our <style>.
-             *
-             * Keep the title updated too.
-             */
-
-            setInterval(() => {
-
-                this.applyFloatLayout();
-
-                this.updateFloatTitle();
-
-            }, 1000);
-        },
+        setInterval(() => {
+            this.applyFloatLayout();
+            this.updateFloatTitle();
+        }, 1000);
+    };

@@ -6,10 +6,10 @@
 #include <string.h>
 
 #ifndef BUILD_MAX_FILE
-#define BUILD_MAX_FILE (1024 * 1024)
+#define BUILD_MAX_FILE (1024 * 1024)        /* 1 MiB per source module */
 #endif
 #ifndef BUILD_MAX_OUTPUT
-#define BUILD_MAX_OUTPUT (8 * 1024 * 1024)
+#define BUILD_MAX_OUTPUT (8 * 1024 * 1024)  /* 8 MiB total output */
 #endif
 #ifndef BUILD_MAX_HEADER
 #define BUILD_MAX_HEADER 4096
@@ -20,10 +20,10 @@
 #endif
 
 typedef struct {
-    char   *out;
+    char   *out;        /* growing output buffer, BUILD_MAX_OUTPUT cap */
     size_t  out_len;
-    char   *version;
-    char   *placeholder;
+    char   *version;     /* trimmed contents of the version file */
+    char   *placeholder;  /* e.g. "__HLS_SAVER_VERSION__" */
 } build_t;
 
 typedef struct {
@@ -33,18 +33,21 @@ typedef struct {
 
 typedef struct {
     const char *name;
-    const char *namespace_;
+    const char *namespace_;      /* "namespace" is a C++ keyword, avoid it */
     const char *description;
-    const char *const *match;
+    const char *const *match;    /* array of @match patterns */
     size_t match_count;
-    const char *const *grant;
+    const char *const *grant;    /* array of @grant permissions */
     size_t grant_count;
-    const char *run_at;
-    const build_tag_t *extra;
+    const char *run_at;          /* NULL -> "document-start" */
+    const build_tag_t *extra;    /* arbitrary extra @key value lines */
     size_t extra_count;
 } build_meta_t;
 
-#define declaremeta(name, ...) \
+#define declaremeta(...) \
+    static build_meta_t META = { __VA_ARGS__ }
+
+#define declaremetaas(name, ...) \
     static build_meta_t name = { __VA_ARGS__ }
 
 #define listout(name, ...) \
@@ -54,6 +57,13 @@ typedef struct {
 #define listtags(name, ...) \
     static const build_tag_t name[] = { __VA_ARGS__ }; \
     enum { name##_COUNT = sizeof(name) / sizeof(name[0]) }
+
+#define listmatch(...) listout(MATCH, __VA_ARGS__)
+#define listgrant(...) listout(GRANT, __VA_ARGS__)
+#define listorder(...) listout(ORDER, __VA_ARGS__)
+#define listextra(...) listtags(EXTRA, __VA_ARGS__)
+
+#define group(...) __VA_ARGS__
 
 static char *build__read_file(const char *path, long *out_len) {
     FILE *f = fopen(path, "rb");
@@ -102,6 +112,16 @@ static size_t build__append_subst(char *dst, size_t dst_len, const char *src,
     }
     return dst_len;
 }
+
+/* ---- public API -------------------------------------------------------
+ *
+ * build_init          -- allocate buffers, read+trim the version file. Pass placeholder=NULL to skip substitution.
+ * build_write_header   -- printf(header_template, version) into the output.
+ * build_add            -- append one source file, with a "// ---- name ----" marker line (strip_prefix chars are cut from the marker's displayed name, e.g. "src/").
+ * build_add_all        -- convenience: build_add over an array of paths.
+ * build_raw            -- append a literal string with no marker/subst, e.g. a blank line or manual boilerplate.
+ * build_finish         -- mkdir -p the output's directory, write the file, print a summary, free everything.
+ */
 
 static void build_init(build_t *b, const char *version_path, const char *placeholder) {
     b->out = malloc(BUILD_MAX_OUTPUT);
@@ -194,15 +214,16 @@ static void build_add_all(build_t *b, const char *const *paths, size_t count,
 }
 
 static void build_finish(build_t *b, const char *out_path) {
-#ifdef BUILD_OUTPUT_FILE
-    if (!out_path) out_path = BUILD_OUTPUT_FILE;
+#ifdef OUTFILE
+    if (!out_path) out_path = OUTFILE;
 #endif
     if (!out_path) {
         fprintf(stderr, "build: build_finish() needs an output path -- either "
-                         "pass one, or #define BUILD_OUTPUT_FILE before #include \"build.h\"\n");
+                         "pass one, or #define OUTFILE before #include \"build.h\"\n");
         exit(1);
     }
 
+    /* mkdir -p the containing directory, if any */
     char dir[1024];
     const char *slash = strrchr(out_path, '/');
     if (slash) {
