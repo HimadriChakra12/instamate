@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      3.08.08
+// @version      3.08.09
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -86,6 +86,11 @@
             label: 'Float',
             description: 'Get floating windowed chats',
         },
+        {
+            key: 'security',
+            label: 'Security / Anti-Telemetry',
+            description: 'Blocks Instagram\u2019s telemetry beacons, known analytics/tracking endpoints, and strips click-id tracking params from the URL.',
+        },
     ];
 
     // Manifest of addons -- permanent changes, always on once built in. Shown
@@ -102,9 +107,9 @@
             description: 'Unloads off-screen Reels videos so long scrolling sessions stay light on memory.',
         },
         {
-            key: 'selectionbugfix',
-            label: 'Instagram Close Fix',
-            description: 'work around, for the instagram bug to select elements when closing the post',
+            key: 'instasnap',
+            label: 'InstaSnap',
+            description: 'Disables animations, trims video preload, pauses offscreen video, and hides sponsored posts \u2014 without the layout-breaking risk of CSS content-visibility tricks.',
         },
     ];
 
@@ -1263,6 +1268,147 @@
 if (IM.isEnabled('security')) {
     Security.init();
 }
+
+// ---- addons/instasnap/core.js ----
+// ---------------------------------------------------------------------------
+    // InstaSnap (addon -- see src/core/settings.js IM_ADDONS)
+    //
+    // A few genuinely safe snappiness wins, adapted from a well-known
+    // "Instagram Lite" userscript pattern -- but deliberately NOT porting
+    // its most aggressive trick. That script applies CSS
+    // `content-visibility: auto` with a flat `contain-intrinsic-size: 1000px`
+    // guess to every `main article, main section` on the page. Real feed
+    // posts vary enormously in actual height (carousels, long captions,
+    // video vs. image), so the browser's placeholder math goes wrong and
+    // content that should be visible gets skipped entirely -- confirmed via
+    // screen recording: the feed intermittently renders completely blank
+    // mid-scroll. The selector is also too broad and matches structure that
+    // has nothing to do with individual posts. That's why that script
+    // "works for DMs but breaks the feed" -- DM markup doesn't even use
+    // article/section tags, so the risky rule never applies there, while it
+    // hits the feed hard.
+    //
+    // What's kept here instead are the parts of that approach that don't
+    // touch layout/rendering at all -- disabling animations, trimming video
+    // preload, and pausing offscreen/hidden video -- which give a real,
+    // noticeable snappiness improvement without any risk of blanking out
+    // content.
+    //
+    // Structured like Float/Security: this file defines the shared
+    // `InstaSnap` object; the other files in this folder attach methods
+    // to it; launch.js kicks it off behind the opt's isEnabled() check.
+    const InstaSnap = {
+        hiddenAdCount: 0,
+        pausedVideoCount: 0,
+
+        init() {
+            this.disableAnimations();
+            this.optimizeVideos();
+            this.hideSponsoredPosts();
+        },
+    };
+
+// ---- addons/instasnap/animations.js ----
+// Near-zero animation/transition durations make the whole UI feel
+    // snappier (menus, likes, story transitions land instantly instead of
+    // easing in) without touching layout or content rendering at all --
+    // unlike content-visibility, this can't cause anything to go blank,
+    // it just changes how fast existing CSS transitions finish.
+    InstaSnap.disableAnimations = function disableAnimations() {
+        const style = document.createElement('style');
+        style.id = 'instamate-instasnap-style';
+        style.textContent = `
+            *, *::before, *::after {
+                animation: none !important
+                transition-duration: none !important
+                scroll-behavior: auto !important;
+            }
+        `;
+        document.head.appendChild(style);
+    };
+
+// ---- addons/instasnap/video.js ----
+// Reduces upfront buffering cost for every video Instagram renders
+    // (feed, not Reels specifically -- see src/opts/reelsramsaver for that),
+    // and pauses whichever ones scroll out of the viewport or whenever the
+    // tab itself is hidden. Doesn't touch video src/loading beyond that --
+    // no risk of content disappearing, since this never touches layout.
+    InstaSnap.optimizeVideos = function optimizeVideos() {
+        const offscreenObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (!entry.isIntersecting && !entry.target.paused) {
+                    entry.target.pause();
+                    InstaSnap.pausedVideoCount++;
+                }
+            });
+        }, { threshold: 0 });
+
+        function prepareVideo(video) {
+            if (video.dataset.instamateSnapReady) return;
+            video.dataset.instamateSnapReady = '1';
+            video.preload = 'metadata';
+            offscreenObserver.observe(video);
+        }
+
+        document.querySelectorAll('video').forEach(prepareVideo);
+
+        new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (!(node instanceof Element)) return;
+                    if (node.tagName === 'VIDEO') prepareVideo(node);
+                    node.querySelectorAll?.('video').forEach(prepareVideo);
+                });
+            });
+        }).observe(document.documentElement, { childList: true, subtree: true });
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) return;
+            document.querySelectorAll('video').forEach((video) => {
+                if (!video.paused) {
+                    video.pause();
+                    InstaSnap.pausedVideoCount++;
+                }
+            });
+        });
+    };
+
+// ---- addons/instasnap/ads.js ----
+// Hides posts explicitly labeled "Sponsored" -- doesn't touch layout
+    // for anything else, so there's no content-visibility-style risk of
+    // real posts going blank. Only ever acts on a post that's already
+    // confirmed to say "Sponsored" verbatim.
+    InstaSnap.hideSponsoredPosts = function hideSponsoredPosts() {
+        function checkPost(post) {
+            if (post.dataset.instamateSnapChecked) return;
+            post.dataset.instamateSnapChecked = '1';
+
+            const isSponsored = [...post.querySelectorAll('span, div')]
+                .some((node) => node.textContent?.trim() === 'Sponsored');
+            if (isSponsored) {
+                post.style.display = 'none';
+                InstaSnap.hiddenAdCount++;
+            }
+        }
+
+        document.querySelectorAll('article').forEach(checkPost);
+
+        new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (!(node instanceof Element)) return;
+                    if (node.tagName === 'ARTICLE') checkPost(node);
+                    node.querySelectorAll?.('article').forEach(checkPost);
+                });
+            });
+        }).observe(document.documentElement, { childList: true, subtree: true });
+    };
+
+// ---- addons/instasnap/launch.js ----
+    InstaSnap.init();
+    if (typeof unsafeWindow !== 'undefined') {
+        unsafeWindow.__instamate_instasnap__ = InstaSnap;
+    }
 
 // ---- addons/float/core.js ----
 // ---------------------------------------------------------------------------

@@ -49,6 +49,14 @@ listextra(
     "src/addons/security/launch.js", \
     )
 
+#define INSTASNAP group( \
+    "src/addons/instasnap/core.js", \
+    "src/addons/instasnap/animations.js", \
+    "src/addons/instasnap/video.js", \
+    "src/addons/instasnap/ads.js", \
+    "src/addons/instasnap/launch.js", \
+    )
+
 #define FLOAT group( \
     "src/addons/float/core.js", \
     "src/addons/float/convo.js", \
@@ -74,6 +82,7 @@ listorder(
     OPTS
     ADDON
     SECURITY
+    INSTASNAP
     FLOAT
     "src/end.js",
     );

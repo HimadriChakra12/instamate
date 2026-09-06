@@ -61,6 +61,11 @@
             label: 'Float',
             description: 'Get floating windowed chats',
         },
+        {
+            key: 'security',
+            label: 'Security / Anti-Telemetry',
+            description: 'Blocks Instagram\u2019s telemetry beacons, known analytics/tracking endpoints, and strips click-id tracking params from the URL.',
+        },
     ];
 
     // Manifest of addons -- permanent changes, always on once built in. Shown
@@ -77,9 +82,9 @@
             description: 'Unloads off-screen Reels videos so long scrolling sessions stay light on memory.',
         },
         {
-            key: 'selectionbugfix',
-            label: 'Instagram Close Fix',
-            description: 'work around, for the instagram bug to select elements when closing the post',
+            key: 'instasnap',
+            label: 'InstaSnap',
+            description: 'Disables animations, trims video preload, pauses offscreen video, and hides sponsored posts \u2014 without the layout-breaking risk of CSS content-visibility tricks.',
         },
     ];
 
