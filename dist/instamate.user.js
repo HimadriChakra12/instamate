@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      3.07.08
+// @version      3.08.08
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
