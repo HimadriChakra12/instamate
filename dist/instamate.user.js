@@ -12,7 +12,6 @@
 // @grant        GM_registerMenuCommand
 // @anonstoryview https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js
 // @reelsramsaver https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js
-// @selectionbugfix https://greasyfork.org/pt-BR/scripts/470382-instagram-close-fix
 // @shared-media Generated
 // @msgname      Generated
 // @float        Generated
@@ -1042,19 +1041,6 @@
         });
     }
 
-// ---- addons/selectionbugfix/script.js ----
-	const events = ['pointerdown', 'pointerup'];
-	events.forEach((event) => addEvent(event));
-
-	function addEvent(event) {
-		document.addEventListener(event, (e) => {
-			if (!e.target.closest('.x1qjc9v5.x9f619.x78zum5.xdt5ytf.x1iyjqo2.xl56j7k')) return;
-			e.preventDefault();
-			e.stopPropagation();
-			document.querySelector('[role="button"]:has([points="20.643 3.357 12 12 3.353 20.647"])').click();
-		});
-	}
-
 // ---- addons/security/core.js ----
 // ---------------------------------------------------------------------------
     // Security / Anti-Telemetry (opt -- see src/core/settings.js IM_OPTS)
@@ -1082,11 +1068,18 @@
     const Security = {
         blockedBeaconCount: 0,
         blockedRequestCount: 0,
+        blockedElementCount: 0,
 
         init() {
             this.blockBeacons();
             this.blockTelemetryRequests();
+            this.blockTrackerElements();
             this.stripTrackingParams();
+            this.hardenOutboundReferrers();
+
+            if (typeof unsafeWindow !== 'undefined') {
+                unsafeWindow.__instamate_security__ = this;
+            }
         },
     };
 
@@ -1123,8 +1116,10 @@
         /\/logging_client_events/i,
         /\/api\/v1\/qe\/expose/i, // experiment/feature-flag exposure logging
         /\/quality_data/i,
+        /\/api\/v1\/qpl/i, // Meta's QuickPerformanceLogging endpoint
         /connect\.facebook\.net\/.+\/fbevents\.js/i, // Meta Pixel script
         /facebook\.com\/tr\b/i, // Meta Pixel tracking-pixel endpoint
+        /facebook\.com\/instagram\/sync/i, // cross-app FB/IG identity sync (ad targeting linkage)
         /\/api\/v1\/wearable_devices\/data_export/i,
     ];
 
@@ -1164,6 +1159,47 @@
         };
     };
 
+// ---- addons/security/dom-blocker.js ----
+// fetch/XHR patching (network.js) only catches requests JavaScript
+    // makes itself -- it does nothing for a <script src="..."> or
+    // <img src="..."> tag inserted straight into the DOM, since the
+    // browser fetches those through its own resource loader, bypassing
+    // page JS entirely. This closes that gap for the same blocklist
+    // (im_isBlockedTelemetryUrl, defined in network.js) by intercepting
+    // the `src` property itself on script/img elements, so a blocked URL
+    // never has a chance to actually start loading.
+    Security.blockTrackerElements = function blockTrackerElements() {
+        [HTMLScriptElement, HTMLImageElement].forEach((ElementClass) => {
+            const descriptor = Object.getOwnPropertyDescriptor(ElementClass.prototype, 'src')
+                || Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'src');
+            if (!descriptor?.set) return;
+
+            Object.defineProperty(ElementClass.prototype, 'src', {
+                configurable: true,
+                enumerable: descriptor.enumerable,
+                get: descriptor.get,
+                set(value) {
+                    if (im_isBlockedTelemetryUrl(value)) {
+                        Security.blockedElementCount++;
+                        return; // never assigned -- the element never loads
+                    }
+                    descriptor.set.call(this, value);
+                },
+            });
+        });
+
+        // setAttribute('src', ...) bypasses the property setter above
+        // entirely, so it needs its own check.
+        const originalSetAttribute = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function setAttribute(name, value) {
+            if (name === 'src' && (this instanceof HTMLScriptElement || this instanceof HTMLImageElement) && im_isBlockedTelemetryUrl(value)) {
+                Security.blockedElementCount++;
+                return;
+            }
+            return originalSetAttribute.call(this, name, value);
+        };
+    };
+
 // ---- addons/security/tracking-params.js ----
 // Click-id style tracking params (fbclid, igshid, etc.) exist purely so
     // Meta can attribute where a visit came from -- they don't affect
@@ -1194,6 +1230,33 @@
             originalPushState(...args);
             strip();
         };
+    };
+
+// ---- addons/security/referrer.js ----
+// Clicking a link out to an external site normally sends that site
+    // your current Instagram page URL as the Referer header -- which post
+    // you were viewing, whose profile, etc. Only applies to genuinely
+    // external links (bio links, shared URLs in DMs); Instagram's own
+    // internal navigation is untouched since it isn't a real cross-origin
+    // request in the first place.
+    Security.hardenOutboundReferrers = function hardenOutboundReferrers() {
+        document.addEventListener('click', (event) => {
+            const link = event.target.closest?.('a[href]');
+            if (!link) return;
+
+            let isExternal = false;
+            try {
+                isExternal = new URL(link.href, location.href).hostname !== location.hostname;
+            } catch {
+                return;
+            }
+            if (!isExternal) return;
+
+            const rel = new Set((link.rel || '').split(/\s+/).filter(Boolean));
+            rel.add('noreferrer');
+            rel.add('noopener');
+            link.rel = [...rel].join(' ');
+        }, true);
     };
 
 // ---- addons/security/launch.js ----

@@ -24,10 +24,17 @@
     const Security = {
         blockedBeaconCount: 0,
         blockedRequestCount: 0,
+        blockedElementCount: 0,
 
         init() {
             this.blockBeacons();
             this.blockTelemetryRequests();
+            this.blockTrackerElements();
             this.stripTrackingParams();
+            this.hardenOutboundReferrers();
+
+            if (typeof unsafeWindow !== 'undefined') {
+                unsafeWindow.__instamate_security__ = this;
+            }
         },
     };

@@ -24,7 +24,6 @@ listextra(
     { "reelsramsaver",   "https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js" },
 //    { "pipinstavideocall",   "https://update.greasyfork.org/scripts/486404/pip%20insta%20video%20call.user.js" },
 //    { "storyviewersearch",   "https://update.greasyfork.org/scripts/590249/Instagram%20Plus%20%28Web%29.user.js" },
-    { "selectionbugfix",   "https://greasyfork.org/pt-BR/scripts/470382-instagram-close-fix" },
     { "shared-media",   "Generated" },
     { "msgname",   "Generated" },
     { "float",   "Generated" },
@@ -38,14 +37,15 @@ listextra(
 
 #define ADDON group( \
     "src/addons/shared-media/script.js", \
-    "src/addons/selectionbugfix/script.js", \
     )
 
 #define SECURITY group( \
     "src/addons/security/core.js", \
     "src/addons/security/beacon.js", \
     "src/addons/security/network.js", \
+    "src/addons/security/dom-blocker.js", \
     "src/addons/security/tracking-params.js", \
+    "src/addons/security/referrer.js", \
     "src/addons/security/launch.js", \
     )
 

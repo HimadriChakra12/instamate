@@ -8,8 +8,10 @@
         /\/logging_client_events/i,
         /\/api\/v1\/qe\/expose/i, // experiment/feature-flag exposure logging
         /\/quality_data/i,
+        /\/api\/v1\/qpl/i, // Meta's QuickPerformanceLogging endpoint
         /connect\.facebook\.net\/.+\/fbevents\.js/i, // Meta Pixel script
         /facebook\.com\/tr\b/i, // Meta Pixel tracking-pixel endpoint
+        /facebook\.com\/instagram\/sync/i, // cross-app FB/IG identity sync (ad targeting linkage)
         /\/api\/v1\/wearable_devices\/data_export/i,
     ];
 
