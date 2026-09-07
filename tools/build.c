@@ -57,6 +57,13 @@ listextra(
     "src/addons/instasnap/launch.js", \
     )
 
+#define SEARCH group( \
+    "src/addons/search/core.js", \
+    "src/addons/search/api.js", \
+    "src/addons/search/ui.js", \
+    "src/addons/search/launch.js", \
+    )
+
 #define FLOAT group( \
     "src/addons/float/core.js", \
     "src/addons/float/convo.js", \
@@ -83,6 +90,7 @@ listorder(
     ADDON
     SECURITY
     INSTASNAP
+    SEARCH
     FLOAT
     "src/end.js",
     );

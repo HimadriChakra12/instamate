@@ -119,6 +119,11 @@
             label: 'InstaSnap',
             description: 'Disables animations, trims video preload, pauses offscreen video, and hides sponsored posts \u2014 without the layout-breaking risk of CSS content-visibility tricks.',
         },
+        {
+            key: 'search',
+            label: 'Search (Ctrl/Cmd+K)',
+            description: 'Discord-style search overlay for people, with a Messages section pending a wired-up endpoint.',
+        },
     ];
 
     const IM = {
