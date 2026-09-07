@@ -12,6 +12,39 @@
     //            purely so the popup can show the user what's active.
     // ---------------------------------------------------------------------------
 
+    // Runs at document-start, where document.head may not exist yet (the
+    // parser hasn't reached the <head> tag). A raw document.head.appendChild
+    // would throw in that case -- and since every file here shares one
+    // top-level IIFE with no try/catch, that exception could kill every
+    // other feature's initialization for the rest of that page load, not
+    // just the style injection. Falls back to documentElement (created
+    // earlier than head in virtually every case), and as a last resort
+    // waits via MutationObserver for the earliest possible moment either
+    // exists -- so this stays just as fast in the normal case while never
+    // being able to crash the rest of the script in the rare one.
+    function im_injectStyleAsap(id, css) {
+        function inject() {
+            if (document.getElementById(id)) return;
+            const style = document.createElement('style');
+            style.id = id;
+            style.textContent = css;
+            (document.head || document.documentElement).appendChild(style);
+        }
+
+        if (document.head || document.documentElement) {
+            inject();
+            return;
+        }
+
+        const observer = new MutationObserver(() => {
+            if (document.head || document.documentElement) {
+                observer.disconnect();
+                inject();
+            }
+        });
+        observer.observe(document, { childList: true, subtree: true });
+    }
+
     const IM_STORAGE_PREFIX = 'instamate.opt.';
 
     function im_gmAvailable() {

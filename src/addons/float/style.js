@@ -3,11 +3,7 @@
     // they'll drift whenever Instagram ships a redesign -- there's no way
     // around hardcoding them short of Instagram exposing stable hooks.
     Float.installFloatStyles = function installFloatStyles() {
-        if (document.getElementById('float-addon-style')) return;
-
-        const style = document.createElement('style');
-        style.id = 'float-addon-style';
-        style.textContent = `
+        im_injectStyleAsap('float-addon-style', `
             div[class="x9f619 x2lah0s x1nhvcw1 x1qjc9v5 xozqiw3 x1q0g3np x78zum5 x1iyjqo2 x5yr21d x1t2pt76 x1n2onr6 x1ja2u2z x1k6qp8s"] {
                 height: 100vh !important;
             }
@@ -28,8 +24,7 @@
             div[class="html-div xdj266r x14z9mp xat24cr x1lziwak xexx8yu xyri2b x18d9i69 x1c1uobl x9f619 xjbqb8w x78zum5 x15mokao x1ga7v0g x16uus16 xbiv7yw xixxii4 x1ey2m1c x1plvlek xryxfnj x1c4vz4f x2lah0s xdt5ytf xqjyukv x1qjc9v5 x1oa3qoh x1nhvcw1 xg7h5cd xh8yej3 xhtitgo x6w1myc x1jeouym"] {
                 display: none;
             }
-        `;
-        document.head.appendChild(style);
+        `);
     };
 
     // Hides Instagram's nav and message composer inside the float window --

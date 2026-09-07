@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      3.08.09
+// @version      4.08.09
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -23,19 +23,29 @@
   'use strict';
 
 // ---- core/settings.js ----
-// ---------------------------------------------------------------------------
-    // Instamate core: settings + registry
-    //
-    // Everything below concatenates into one IIFE, so this `IM` object is just
-    // shared across every later file in the build via closure -- no imports
-    // needed. Two kinds of feature live in src/:
-    //
-    //   opts/    toggleable features. Wrap your logic in
-    //            `if (IM.isEnabled('yourkey')) { ... }` and add a matching
-    //            entry to IM_OPTS below so it shows up in the popup.
-    //   addons/  permanent features. They always run; list them in IM_ADDONS
-    //            purely so the popup can show the user what's active.
-    // ---------------------------------------------------------------------------
+
+    function im_injectStyleAsap(id, css) {
+        function inject() {
+            if (document.getElementById(id)) return;
+            const style = document.createElement('style');
+            style.id = id;
+            style.textContent = css;
+            (document.head || document.documentElement).appendChild(style);
+        }
+
+        if (document.head || document.documentElement) {
+            inject();
+            return;
+        }
+
+        const observer = new MutationObserver(() => {
+            if (document.head || document.documentElement) {
+                observer.disconnect();
+                inject();
+            }
+        });
+        observer.observe(document, { childList: true, subtree: true });
+    }
 
     const IM_STORAGE_PREFIX = 'instamate.opt.';
 
@@ -63,13 +73,9 @@
                 localStorage.setItem(IM_STORAGE_PREFIX + key, value ? 'true' : 'false');
             }
         } catch {
-            /* storage unavailable -- toggle just won't persist across reloads */
         }
     }
 
-    // Manifest of every toggleable opt. Add an entry here whenever a new opt
-    // module is wired into tools/build.c's ORDER list, using the same key you
-    // guard its code with via IM.isEnabled(key).
     const IM_OPTS = [
         {
             key: 'anonstoryview',
@@ -93,8 +99,6 @@
         },
     ];
 
-    // Manifest of addons -- permanent changes, always on once built in. Shown
-    // in the popup for visibility only; there is no toggle for these.
     const IM_ADDONS = [
         {
             key: 'sharedmedia',
@@ -131,18 +135,6 @@
     }
 
 // ---- core/ui.js ----
-// ---------------------------------------------------------------------------
-    // Instamate core: settings popup
-    //
-    // Injects an Instagram-styled popup for switching opts on/off. The only
-    // entry point on-page is Instagram's own sidebar icon, repurposed to open
-    // it (see the "Sidebar icon takeover" section below); GM_registerMenuCommand
-    // is a guaranteed fallback via the userscript manager's own menu. Runs
-    // inside its own shadow root so Instagram's own CSS can't bleed into it
-    // (and vice versa). Toggling an opt takes effect on next reload, since
-    // opt code already ran at document-start by the time you'd ever see this
-    // popup.
-    // ---------------------------------------------------------------------------
 
     const IM_UI_CSS = `
         :host { all: initial; }
@@ -283,25 +275,11 @@
         if (im_reloadBtn) im_reloadBtn.classList.remove('im-hidden');
     }
 
-    // ---- Sidebar icon takeover --------------------------------------------
-    //
-    // Instagram's own logo/home icon at the top of the left sidebar is just
-    // an <a href="/">. Rather than adding a new item next to it (which never
-    // quite matches Instagram's spacing/sizing and ends up looking bolted
-    // on), we take that exact element over: same icon, same spot, but its
-    // click now opens Instamate's settings instead of navigating home.
 
     function im_findInstagramHomeIcon() {
-        // The Instagram *logo* link (top of the sidebar) and the *Home* nav
-        // item are both `<a href="/">`, so matching on href alone grabs
-        // whichever comes first in the DOM -- which is the Home item, not
-        // the logo. Disambiguate by finding the anchor that wraps the
-        // "Instagram" logo svg specifically.
         const logoSvg = document.querySelector('a[href="/"] svg[aria-label="Instagram" i]');
         if (logoSvg) return logoSvg.closest('a[href="/"]');
 
-        // Fallback for markup variants where the svg has a <title> instead
-        // of an aria-label.
         const byTitle = [...document.querySelectorAll('a[href="/"]')].find((a) =>
             a.querySelector('svg title')?.textContent?.trim().toLowerCase() === 'instagram'
         );
@@ -313,12 +291,6 @@
         );
     }
 
-    // Instagram's SPA re-renders the sidebar on navigation, swapping in a
-    // brand-new <a> node with none of our hijack markers or listener. A
-    // one-shot "mounted" flag would miss that entirely and never recover --
-    // so this checks the *current* node's own dataset every call instead of
-    // a global flag, and it's meant to be called repeatedly for the life of
-    // the page (see the observer below), not just until the first success.
     function im_tryMountSidebarItem(onClick) {
         const el = im_findInstagramHomeIcon();
         if (!el) return false;
@@ -376,8 +348,6 @@
         mediaNote.style.padding = '0 18px 10px';
         const mediaGrid = document.createElement('div');
         mediaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 18px 10px;';
-        // Instagram's own brand red, full-width to read as part of the
-        // native settings surface rather than a bolted-on extension button.
         const mediaClearCache = document.createElement('button');
         mediaClearCache.textContent = 'Clear cache';
         mediaClearCache.style.cssText = 'display:block;width:100%;margin:0 0 14px;padding:10px 18px;border:none;background:#ED4956;color:#fff;font-size:14px;font-weight:600;cursor:pointer;';
@@ -413,9 +383,6 @@
             renderMediaItems();
         }
 
-        // Cache persists across reloads (see im_clearMediaCacheForCurrentThread
-        // in the addon) -- this is the only way to reset it for the
-        // currently open chat.
         mediaClearCache.addEventListener('click', () => {
             if (typeof im_clearMediaCacheForCurrentThread === 'function') im_clearMediaCacheForCurrentThread();
             renderMediaItems();
@@ -495,17 +462,10 @@
 
 // ---- opts/anonstoryview/script.js ----
     if (IM.isEnabled('anonstoryview')) {
-    // Store a reference to the original send method of XMLHttpRequest
     var originalXMLSend = XMLHttpRequest.prototype.send;
-    // Override the send method
     XMLHttpRequest.prototype.send = function() {
-        // Check if the request URL contains the "viewSeenAt" string
         if (typeof arguments[0] === "string" && arguments[0].includes("viewSeenAt")) {
-            // Block the request by doing nothing
-            // This prevents the "viewSeenAt" field from being sent
         } else {
-            // If the request URL does not contain "viewSeenAt",
-            // call the original send method to proceed with the request
             originalXMLSend.apply(this, arguments);
         }
     };
@@ -549,11 +509,9 @@
 
 // ---- opts/msgname/script.js ----
     if (IM.isEnabled('msgname')) {
-        // Username span
         const USERNAME_SELECTOR =
             'div.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x9f619.xjbqb8w.x78zum5.x15mokao.x1ga7v0g.x16uus16.xbiv7yw.x1xmf6yo.x1uhb9sk.x1plvlek.xryxfnj.x1c4vz4f.x2lah0s.xdt5ytf.xqjyukv.x1qjc9v5.x1oa3qoh.x1nhvcw1 span.x1lliihq.x193iq5w.x6ikm8r.x10wlt62.xlyipyv.xuxw1ft';
     
-        // Nickname
         const NICKNAME_SELECTOR = 'h2 span[title]';
     
         const COUNT_PREFIX = /^\((\d+)\)\s*/;
@@ -608,19 +566,13 @@
             let base;
     
             if (username) {
-                // Normal DM
                 base = `${nickname} - ${username}`;
             } else if (nickname === 'Instagram User') {
-                // Deleted/deactivated/etc. account, NOT a group
                 base = nickname;
             } else {
-                // No username = group
                 base = `${nickname} - Group`;
             }
     
-            // Read whatever count Instagram currently has on the tab title
-            // (whether it just set it, or it's sitting on a title we wrote
-            // last time) and fold it back in, instead of dropping it.
             const count = getCurrentCount();
             const newTitle = count ? `(${count}) ${base}` : base;
     
@@ -628,13 +580,10 @@
                 lastTitle = newTitle;
                 document.title = newTitle;
             } else if (document.title !== lastTitle) {
-                // Instagram overwrote our title with something other than a
-                // count-prefix update -- put ours back.
                 document.title = lastTitle;
             }
         }
     
-        // Watch for Instagram's dynamically generated DOM
         function startObserver() {
             if (!document.documentElement) {
                 requestAnimationFrame(startObserver);
@@ -656,7 +605,6 @@
     
         startObserver();
     
-        // Handle Instagram SPA navigation
         let lastURL = location.href;
     
         setInterval(() => {
@@ -670,62 +618,10 @@
     }
 
 // ---- addons/shared-media/script.js ----
-// ---------------------------------------------------------------------------
-    // Shared Media (addon, permanent -- see src/core/settings.js IM_ADDONS)
-    //
-    // Instagram web has no equivalent of the mobile app's "shared media"
-    // gallery for a chat, so this rebuilds a rough one client-side: scan the
-    // photos/videos currently rendered in the *open* thread and hand them
-    // back as a de-duplicated list. src/core/ui.js renders that list as a
-    // grid inside the settings popup.
-    //
-    // Scope: only the currently-open conversation, not the whole page.
-    // A naive `document.querySelectorAll('img')` also picks up thumbnails
-    // from the conversation list on the left (every other DM's preview
-    // avatar/last-shared-image), which has nothing to do with "this chat".
-    // We find that conversation-list container -- it's identifiable by
-    // holding several `a[href^="/direct/t/"]` links, one per conversation --
-    // and exclude everything inside it before scanning for media.
-    //
-    // Filtering: only actual photo/video message attachments should show up
-    // here -- not avatars/profile pictures, not shared posts/reels (those
-    // are attachments *of* a post, not something someone actually sent as a
-    // photo/video), not link-preview thumbnails, not stickers/emoji. We
-    // filter by:
-    //   - size (avatars/stickers/emoji are small)
-    //   - shape (profile pictures render circular; real photo/video
-    //     attachments never do -- checked via computed border-radius rather
-    //     than alt text, which Instagram doesn't always set consistently)
-    //   - alt text, as a second signal alongside the shape check
-    //   - ancestry: an instagram.com/p/, /reel/, /reels/, or /tv/ link means
-    //     it's a shared post/reel, not a raw attachment; an off-instagram
-    //     link wrapping a single image alongside title text is a
-    //     link-preview card
-    //
-    // Caveat, unavoidable from a userscript: Instagram only renders messages
-    // that have scrolled into view, loading older history lazily as you
-    // scroll up. This only ever sees what's currently loaded -- scroll to
-    // the top of the chat first for a fuller list, then reopen the popup.
-    // ---------------------------------------------------------------------------
 
-    // Confirmed from real markup: Instagram's own profile-picture <img>
-    // uses alt="user-profile-picture" (hyphenated, not "Profile picture for
-    // <name>" as originally guessed) -- and its host was
-    // scontent.<code>.fna.fbcdn.net, i.e. a *scontent* host, same family as
-    // real photo/video attachments. So hostname alone can't tell a profile
-    // picture apart from a sent photo; "scontent" only rules out the
-    // generic sticker/static CDN hosts, it doesn't confirm "this is a real
-    // attachment". Alt text and shape are the checks that actually catch
-    // profile pictures, so they always run -- hostname is a fast path for
-    // excluding stickers only, never a shortcut to skip the other checks.
     const IM_PROFILE_PIC_HINTS = /profile[\s-]?picture|avatar|story ring/i;
     const IM_POST_REEL_HREF = /instagram\.com\/(p|reel|reels|tv)\//i;
 
-    // The left-hand conversation list is made of several `a[href^="/direct/t/"]`
-    // (one per conversation, each pointing at a *different* thread id) sitting
-    // in a shared container -- that container is the thing to exclude.
-    // Re-derived on each call rather than cached, since Instagram may
-    // remount it between renders.
     function im_findThreadListContainer() {
         const threadLinks = [...document.querySelectorAll('a[href^="/direct/t/"]')];
         if (threadLinks.length < 2) return null;
@@ -750,14 +646,6 @@
         return best;
     }
 
-    // Instagram serves different image categories off visibly different
-    // CDN hostnames:
-    //   - actual sent photos/videos:  scontent*.cdninstagram.com / scontent*.fbcdn.net
-    //   - profile pictures/avatars:   instagram.<code>.fna.fbcdn.net (no "scontent")
-    //   - stickers/emoji/UI assets:   generic cdn hosts, e.g. static.cdninstagram.com
-    // This is a much more reliable signal than shape/alt-text guessing, so
-    // it's checked first; the older heuristics stay on as a fallback for
-    // any URL pattern that doesn't clearly match one of these.
     function im_hostnameCategory(src) {
         let host = '';
         try {
@@ -765,9 +653,6 @@
         } catch {
             return 'unknown';
         }
-        // Generic/static CDN hosts (not scontent-prefixed) are reliably
-        // stickers/emoji/UI chrome, not user-sent media or profile
-        // pictures -- this direction is safe to trust outright.
         if (/(^|\.)cdninstagram\.com$/i.test(host) || /^cdn\./i.test(host) || /static\./i.test(host)) return 'sticker';
         return 'unknown'; // scontent/fbcdn hosts serve both photos AND profile pictures -- can't tell from hostname alone
     }
@@ -785,23 +670,6 @@
         return false;
     }
 
-    // Second, independent signal for "this is a conversation-list preview
-    // row, not the open thread" -- catches cases where
-    // im_findThreadListContainer can't find a shared container (e.g. only
-    // one other conversation is loaded, so its "2+ thread links share a
-    // parent" heuristic never fires). Conversation-list rows have a
-    // recognizable text fingerprint regardless of container structure:
-    // a relative timestamp like "2d" via <abbr aria-label="... ago">, often
-    // paired with a "reacted ... to your message" / "sent you a message" /
-    // "Pinned" style preview line. Real message-thread content doesn't look
-    // like this.
-    // A post shared *into* a chat (forwarded from someone's profile) isn't
-    // wrapped in an /p/ or /reel/ permalink like a normal post link would
-    // be -- the big image sits inside a plain `div[role="button"]`, not an
-    // anchor at all. What it does always have nearby is a link to the
-    // original poster's bare profile (e.g. href="/emusabbir01/") plus a
-    // repeated "<username> <caption>" text line below the image. That
-    // combination -- not any single element -- is the reliable signal.
     const IM_BARE_USERNAME_PATH = /^\/[A-Za-z0-9_.]{1,30}\/?$/;
 
     function im_isSharedPostCard(img) {
@@ -823,13 +691,6 @@
         return false;
     }
 
-    // Reels shared into a chat use the same role="button" + bare-profile-
-    // link card structure as shared posts, but always carry one extra,
-    // very specific tell: an overlay svg labeled "Clip" (Instagram's own
-    // internal name for a Reel) on top of the thumbnail. Checking for that
-    // directly is more reliable than leaning on im_isSharedPostCard alone,
-    // since a reel share doesn't always have caption text below it the way
-    // a post share does.
     function im_isReelShareCard(img) {
         let node = img.closest('div');
         for (let i = 0; i < 4 && node; i++) {
@@ -871,8 +732,6 @@
             if (IM_POST_REEL_HREF.test(link.href)) return false; // shared post/reel, not a raw sent photo/video
 
             if (!link.href.includes('instagram.com')) {
-                // Off-instagram link-preview card: single thumbnail plus a
-                // title/description block as a sibling.
                 const hasCardText = link.querySelector('div,span')?.textContent?.trim().length > 0 &&
                     link.querySelectorAll('img').length === 1 &&
                     link.parentElement?.textContent?.trim().length > (link.textContent?.trim().length || 0);
@@ -885,24 +744,6 @@
         return true;
     }
 
-    // ---- Persistent per-thread cache ---------------------------------------
-    //
-    // Instagram virtualizes the message list -- once a message scrolls far
-    // enough out of view, its DOM node (and any image inside it) gets
-    // unmounted entirely, not just hidden. A plain re-scan of the live DOM
-    // would "lose" media that was found a moment ago just because the
-    // person scrolled past it. This cache accumulates everything ever found
-    // for a given thread instead, so items only ever get added, never
-    // dropped by scrolling.
-    //
-    // It's purely passive: there's no button that drives Instagram's own
-    // scroll container to force-load history (that turned out unreliable
-    // in practice -- Instagram's lazy-load didn't respond to programmatic
-    // scrolling here). Instead, the cache just keeps whatever's rendered
-    // each time this runs, growing naturally as the person scrolls the
-    // chat themselves in the course of normal use, and persists across
-    // page reloads via GM storage so it isn't lost either. A "Clear cache"
-    // button (src/core/ui.js) resets it for the current thread.
     const IM_MEDIA_CACHE_PREFIX = 'instamate.sharedmedia.';
     const IM_MEDIA_CACHE = new Map(); // threadPath -> Map(src -> item), in-memory mirror of GM storage for this session
 
@@ -920,7 +761,6 @@
                 const stored = JSON.parse(GM_getValue(im_mediaCacheKeyForCurrentThread(), '[]'));
                 stored.forEach((item) => map.set(item.src || item.poster, item));
             } catch {
-                /* corrupt/missing stored value -- start fresh */
             }
         }
         IM_MEDIA_CACHE.set(pathKey, map);
@@ -932,7 +772,6 @@
         try {
             GM_setValue(im_mediaCacheKeyForCurrentThread(), JSON.stringify([...cache.values()]));
         } catch {
-            /* storage unavailable/full -- cache still works for this session, just won't persist */
         }
     }
 
@@ -942,7 +781,6 @@
             try {
                 GM_setValue(im_mediaCacheKeyForCurrentThread(), '[]');
             } catch {
-                /* ignore */
             }
         }
     }
@@ -978,14 +816,6 @@
         return [...cache.values()];
     }
 
-    // ---- Settings-popup section --------------------------------------------
-    //
-    // Registers this addon's own UI (media grid + Clear cache button) with
-    // the core settings popup instead of src/core/ui.js hardcoding it --
-    // see im_registerPanelSection there. Means this addon's UI lives
-    // entirely in this file: removing this addon (deleting this file from
-    // the build) removes its section from the popup automatically, no
-    // edits needed in ui.js.
     if (typeof im_registerPanelSection === 'function') {
         im_registerPanelSection({
             mount(panel) {
@@ -997,9 +827,6 @@
                 note.style.padding = '0 18px 10px';
                 const grid = document.createElement('div');
                 grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 18px 10px;';
-                // Instagram's own brand red, full-width to read as part of
-                // the native settings surface rather than a bolted-on
-                // extension button.
                 const clearCacheBtn = document.createElement('button');
                 clearCacheBtn.textContent = 'Clear cache';
                 clearCacheBtn.style.cssText = 'display:block;width:100%;margin:0 0 14px;padding:10px 18px;border:none;background:#ED4956;color:#fff;font-size:14px;font-weight:600;cursor:pointer;';
@@ -1025,9 +852,6 @@
                     });
                 }
 
-                // Cache persists across reloads (im_clearMediaCacheForCurrentThread
-                // above) -- this is the only way to reset it for the
-                // currently open chat.
                 clearCacheBtn.addEventListener('click', () => {
                     im_clearMediaCacheForCurrentThread();
                     renderItems();
@@ -1047,29 +871,6 @@
     }
 
 // ---- addons/security/core.js ----
-// ---------------------------------------------------------------------------
-    // Security / Anti-Telemetry (opt -- see src/core/settings.js IM_OPTS)
-    //
-    // Instagram reports an enormous amount of client-side telemetry: event
-    // batches, experiment/feature-flag exposure logging, performance and
-    // error reporting, and tracking pixels -- most of it fired via
-    // navigator.sendBeacon or background fetch/XHR calls that don't affect
-    // anything you see on screen. This addon cuts that down without
-    // touching the actual app functionality (messaging, feed, GraphQL
-    // calls that the page needs a real response from all still work
-    // normally).
-    //
-    // Structured like the Float addon: this file (core.js) defines the
-    // shared `Security` object; the other files in this folder each attach
-    // one method to it; launch.js kicks it off behind the opt's
-    // isEnabled() check.
-    //
-    // Deliberately conservative: only sendBeacon (which by definition is
-    // "fire and forget" reporting, never something the page waits on) and a
-    // specific, named list of known telemetry/analytics URL patterns are
-    // blocked. Nothing that looks like a real GraphQL/API call the app
-    // might depend on gets touched. If something breaks, turn this opt off
-    // in the settings popup -- it takes effect after a reload.
     const Security = {
         blockedBeaconCount: 0,
         blockedRequestCount: 0,
@@ -1089,33 +890,18 @@
     };
 
 // ---- addons/security/beacon.js ----
-// navigator.sendBeacon exists specifically for "send this and don't
-    // wait for a response, even if the page is about to unload" -- that's
-    // exactly the shape of analytics/telemetry reporting and never
-    // something real app functionality depends on getting a reply from.
-    // Instagram fires it constantly (page-leave events, engagement pings,
-    // performance samples). Stubbing it to a no-op that reports success
-    // (so calling code doesn't retry via a fallback path) silently drops
-    // all of it.
     Security.blockBeacons = function blockBeacons() {
         if (!navigator.sendBeacon) return;
 
         const original = navigator.sendBeacon.bind(navigator);
         navigator.sendBeacon = (url, data) => {
             Security.blockedBeaconCount++;
-            // Uncomment for debugging which endpoints get hit:
-            // console.log('[Instamate Security] blocked beacon:', url);
             void original; // kept for reference, intentionally never called
             return true; // report success so callers don't fall back to fetch/XHR instead
         };
     };
 
 // ---- addons/security/network.js ----
-// Named, specific telemetry/analytics URL patterns -- deliberately not
-    // a broad "block anything with /graphql/ or /api/" rule, since
-    // Instagram's actual functionality (messages, feed, everything) runs
-    // over those same endpoints. Only patterns known to be pure logging/
-    // experiment-exposure/error-reporting traffic are listed here.
     const IM_SECURITY_BLOCKED_PATTERNS = [
         /\/ajax\/bz/i, // Meta's batched client-event logging endpoint
         /\/logging_client_events/i,
@@ -1139,10 +925,6 @@
             const url = typeof input === 'string' ? input : input?.url;
             if (im_isBlockedTelemetryUrl(url)) {
                 Security.blockedRequestCount++;
-                // Resolve with an empty, successful-looking response rather
-                // than rejecting -- Instagram's own reporting code
-                // generally no-ops on a 204 rather than treating it as an
-                // error worth retrying or logging.
                 return Promise.resolve(new Response(null, { status: 204 }));
             }
             return originalFetch(input, init);
@@ -1165,14 +947,6 @@
     };
 
 // ---- addons/security/dom-blocker.js ----
-// fetch/XHR patching (network.js) only catches requests JavaScript
-    // makes itself -- it does nothing for a <script src="..."> or
-    // <img src="..."> tag inserted straight into the DOM, since the
-    // browser fetches those through its own resource loader, bypassing
-    // page JS entirely. This closes that gap for the same blocklist
-    // (im_isBlockedTelemetryUrl, defined in network.js) by intercepting
-    // the `src` property itself on script/img elements, so a blocked URL
-    // never has a chance to actually start loading.
     Security.blockTrackerElements = function blockTrackerElements() {
         [HTMLScriptElement, HTMLImageElement].forEach((ElementClass) => {
             const descriptor = Object.getOwnPropertyDescriptor(ElementClass.prototype, 'src')
@@ -1193,8 +967,6 @@
             });
         });
 
-        // setAttribute('src', ...) bypasses the property setter above
-        // entirely, so it needs its own check.
         const originalSetAttribute = Element.prototype.setAttribute;
         Element.prototype.setAttribute = function setAttribute(name, value) {
             if (name === 'src' && (this instanceof HTMLScriptElement || this instanceof HTMLImageElement) && im_isBlockedTelemetryUrl(value)) {
@@ -1206,11 +978,6 @@
     };
 
 // ---- addons/security/tracking-params.js ----
-// Click-id style tracking params (fbclid, igshid, etc.) exist purely so
-    // Meta can attribute where a visit came from -- they don't affect
-    // anything the page does. Stripped via history.replaceState so it
-    // doesn't trigger a navigation/reload, just cleans up the address bar
-    // and stops the value from sitting in browser history.
     const IM_TRACKING_PARAMS = ['fbclid', 'igshid', 'igsh', 'mibextid'];
 
     Security.stripTrackingParams = function stripTrackingParams() {
@@ -1227,8 +994,6 @@
         };
 
         strip();
-        // Instagram is an SPA -- re-check after navigation events rather
-        // than only once on initial load.
         window.addEventListener('popstate', strip);
         const originalPushState = history.pushState.bind(history);
         history.pushState = (...args) => {
@@ -1238,12 +1003,6 @@
     };
 
 // ---- addons/security/referrer.js ----
-// Clicking a link out to an external site normally sends that site
-    // your current Instagram page URL as the Referer header -- which post
-    // you were viewing, whose profile, etc. Only applies to genuinely
-    // external links (bio links, shared URLs in DMs); Instagram's own
-    // internal navigation is untouched since it isn't a real cross-origin
-    // request in the first place.
     Security.hardenOutboundReferrers = function hardenOutboundReferrers() {
         document.addEventListener('click', (event) => {
             const link = event.target.closest?.('a[href]');
@@ -1270,33 +1029,6 @@ if (IM.isEnabled('security')) {
 }
 
 // ---- addons/instasnap/core.js ----
-// ---------------------------------------------------------------------------
-    // InstaSnap (addon -- see src/core/settings.js IM_ADDONS)
-    //
-    // A few genuinely safe snappiness wins, adapted from a well-known
-    // "Instagram Lite" userscript pattern -- but deliberately NOT porting
-    // its most aggressive trick. That script applies CSS
-    // `content-visibility: auto` with a flat `contain-intrinsic-size: 1000px`
-    // guess to every `main article, main section` on the page. Real feed
-    // posts vary enormously in actual height (carousels, long captions,
-    // video vs. image), so the browser's placeholder math goes wrong and
-    // content that should be visible gets skipped entirely -- confirmed via
-    // screen recording: the feed intermittently renders completely blank
-    // mid-scroll. The selector is also too broad and matches structure that
-    // has nothing to do with individual posts. That's why that script
-    // "works for DMs but breaks the feed" -- DM markup doesn't even use
-    // article/section tags, so the risky rule never applies there, while it
-    // hits the feed hard.
-    //
-    // What's kept here instead are the parts of that approach that don't
-    // touch layout/rendering at all -- disabling animations, trimming video
-    // preload, and pausing offscreen/hidden video -- which give a real,
-    // noticeable snappiness improvement without any risk of blanking out
-    // content.
-    //
-    // Structured like Float/Security: this file defines the shared
-    // `InstaSnap` object; the other files in this folder attach methods
-    // to it; launch.js kicks it off behind the opt's isEnabled() check.
     const InstaSnap = {
         hiddenAdCount: 0,
         pausedVideoCount: 0,
@@ -1309,11 +1041,6 @@ if (IM.isEnabled('security')) {
     };
 
 // ---- addons/instasnap/animations.js ----
-// Near-zero animation/transition durations make the whole UI feel
-    // snappier (menus, likes, story transitions land instantly instead of
-    // easing in) without touching layout or content rendering at all --
-    // unlike content-visibility, this can't cause anything to go blank,
-    // it just changes how fast existing CSS transitions finish.
     InstaSnap.disableAnimations = function disableAnimations() {
         const style = document.createElement('style');
         style.id = 'instamate-instasnap-style';
@@ -1328,11 +1055,6 @@ if (IM.isEnabled('security')) {
     };
 
 // ---- addons/instasnap/video.js ----
-// Reduces upfront buffering cost for every video Instagram renders
-    // (feed, not Reels specifically -- see src/opts/reelsramsaver for that),
-    // and pauses whichever ones scroll out of the viewport or whenever the
-    // tab itself is hidden. Doesn't touch video src/loading beyond that --
-    // no risk of content disappearing, since this never touches layout.
     InstaSnap.optimizeVideos = function optimizeVideos() {
         const offscreenObserver = new IntersectionObserver((entries) => {
             entries.forEach((entry) => {
@@ -1374,10 +1096,6 @@ if (IM.isEnabled('security')) {
     };
 
 // ---- addons/instasnap/ads.js ----
-// Hides posts explicitly labeled "Sponsored" -- doesn't touch layout
-    // for anything else, so there's no content-visibility-style risk of
-    // real posts going blank. Only ever acts on a post that's already
-    // confirmed to say "Sponsored" verbatim.
     InstaSnap.hideSponsoredPosts = function hideSponsoredPosts() {
         function checkPost(post) {
             if (post.dataset.instamateSnapChecked) return;
@@ -1411,28 +1129,6 @@ if (IM.isEnabled('security')) {
     }
 
 // ---- addons/float/core.js ----
-// ---------------------------------------------------------------------------
-    // Float (opt -- see src/core/settings.js IM_OPTS)
-    //
-    // Pops a DM conversation out into its own real browser window (not an
-    // iframe) so you can keep chatting while browsing the rest of
-    // Instagram. Two modes share this one `Float` object:
-    //   - Main window: injects a "Float conversation" button next to the
-    //     info/call icons in an open DM, which opens the float window.
-    //   - Float window: the popped-out window itself, identified by its
-    //     window.name starting with "float:" (survives Instagram's SPA
-    //     navigation, unlike a URL param would). It strips down to just
-    //     the conversation view -- no sidebar, no composer chrome beyond
-    //     what's needed -- and keeps its own tab title in sync.
-    //
-    // Files in this folder, each attaching methods to this same object:
-    //   core.js (this file)  - skeleton + init/initMainWindow
-    //   conversation.js      - reading which conversation is open
-    //   button.js            - injecting the float button in the main window
-    //   window.js            - opening/tracking float popup windows
-    //   style.js             - float window's stripped-down layout
-    //   title.js             - float window's tab title
-    //   launch.js            - kicks off Float.init() behind the opt toggle
     const Float = {
         isFloatWindow: window.name.startsWith('float:'),
         windowPrefix: 'float:',
@@ -1447,8 +1143,6 @@ if (IM.isEnabled('security')) {
             }
         },
 
-        // Main window: watch for DOM changes and (re-)inject the float
-        // button whenever Instagram re-renders the conversation header.
         initMainWindow() {
             const start = () => {
                 new MutationObserver(() => this.injectButton())
@@ -1518,25 +1212,18 @@ Float.injectButton = function injectButton() {
     };
 
 // ---- addons/float/window.js ----
-// Opens (or focuses, if already open) a real browser window for the
-    // current conversation -- a genuine popup with Instagram's own URL,
-    // not an iframe.
     Float.openFloat = function openFloat() {
         const conversation = this.getConversation();
         if (!conversation) return;
 
         const { id, url } = conversation;
 
-        // Already floating? Just focus it instead of opening a duplicate.
         const existing = this.windows.get(id);
         if (existing && !existing.closed) {
             existing.focus();
             return;
         }
 
-        // window.name (not a URL param) survives Instagram's SPA
-        // navigation, so this is how the float window recognizes itself
-        // in initFloatWindow.
         const windowName = this.windowPrefix + id;
         const features = 'popup=yes,width=720,height=820,resizable=yes,scrollbars=yes';
         const popup = window.open(url, windowName, features);
@@ -1554,9 +1241,6 @@ Float.injectButton = function injectButton() {
         popup.focus();
     };
 
-    // Float window: strip down the layout and keep re-applying it/the tab
-    // title, since Instagram's SPA can re-render large portions of the
-    // page (including replacing our <style> target nodes) at any time.
     Float.initFloatWindow = function initFloatWindow() {
         document.documentElement.dataset.floatWindow = 'true';
         this.installFloatStyles();
@@ -1580,16 +1264,8 @@ Float.injectButton = function injectButton() {
     };
 
 // ---- addons/float/style.js ----
-// Injects the CSS that hides Instagram's sidebar/chrome inside the
-    // float window. These are Instagram's own generated class names, so
-    // they'll drift whenever Instagram ships a redesign -- there's no way
-    // around hardcoding them short of Instagram exposing stable hooks.
     Float.installFloatStyles = function installFloatStyles() {
-        if (document.getElementById('float-addon-style')) return;
-
-        const style = document.createElement('style');
-        style.id = 'float-addon-style';
-        style.textContent = `
+        im_injectStyleAsap('float-addon-style', `
             div[class="x9f619 x2lah0s x1nhvcw1 x1qjc9v5 xozqiw3 x1q0g3np x78zum5 x1iyjqo2 x5yr21d x1t2pt76 x1n2onr6 x1ja2u2z x1k6qp8s"] {
                 height: 100vh !important;
             }
@@ -1610,14 +1286,9 @@ Float.injectButton = function injectButton() {
             div[class="html-div xdj266r x14z9mp xat24cr x1lziwak xexx8yu xyri2b x18d9i69 x1c1uobl x9f619 xjbqb8w x78zum5 x15mokao x1ga7v0g x16uus16 xbiv7yw xixxii4 x1ey2m1c x1plvlek xryxfnj x1c4vz4f x2lah0s xdt5ytf xqjyukv x1qjc9v5 x1oa3qoh x1nhvcw1 xg7h5cd xh8yej3 xhtitgo x6w1myc x1jeouym"] {
                 display: none;
             }
-        `;
-        document.head.appendChild(style);
+        `);
     };
 
-    // Hides Instagram's nav and message composer inside the float window --
-    // walks up from the composer textarea rather than hardcoding a
-    // container class, stopping if a "container" gets suspiciously tall
-    // (150px) so it can't accidentally swallow the whole conversation.
     Float.applyFloatLayout = function applyFloatLayout() {
         if (!this.isFloatWindow) return;
 
@@ -1646,9 +1317,6 @@ Float.updateFloatTitle = function updateFloatTitle() {
         if (name) document.title = 'Float \u2014 ' + name;
     };
 
-    // Reads the chat name by walking up from the conversation-info icon
-    // and taking the first short, non-empty text line found -- Instagram
-    // doesn't expose a stable "chat name" element to read directly.
     Float.getChatName = function getChatName() {
         const infoIcon = document.querySelector('svg[aria-label="Conversation information"]');
         if (!infoIcon) return null;
