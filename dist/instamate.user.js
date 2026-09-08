@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      4.09.10
+// @version      4.10.10
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -1238,6 +1238,7 @@
                 text: result.message_text,
                 timestamp: result.timestamp,
                 sender: usersById.get(result.sender_id)?.username || 'Unknown',
+                mid: result.mid,
             }));
 
             return { items, pending: false, error: false };
@@ -1275,6 +1276,11 @@ const IM_SEARCH_CSS = `
         .im-empty { padding: 24px 18px; text-align: center; color: #8e8e8e; font-size: 13px; }
         .im-hint { padding: 10px 18px; border-top: 1px solid #3a3a3a; font-size: 11px; color: #8e8e8e; }
     `;
+
+    function im_navigateSpa(url) {
+        history.pushState(null, '', url);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+    }
 
     function im_searchRow({ avatar, name, sub, onClick }) {
         const row = document.createElement('div');
@@ -1387,7 +1393,7 @@ const IM_SEARCH_CSS = `
                     name: person.fullName || person.username,
                     sub: '@' + person.username + (person.isPrivate ? ' \u00b7 Private' : ''),
                     onClick: () => {
-                        location.href = `https://www.instagram.com/${person.username}/`;
+                        im_navigateSpa(`https://www.instagram.com/${person.username}/`);
                         closeOverlay();
                     },
                 }));
@@ -1405,6 +1411,13 @@ const IM_SEARCH_CSS = `
                 results.append(im_searchRow({
                     name: message.text,
                     sub: `${message.sender} \u00b7 ${when}`,
+                    onClick: () => {
+                        if (!message.mid) return;
+                        const url = new URL(location.href);
+                        url.searchParams.set('mid', message.mid);
+                        im_navigateSpa(url.toString());
+                        closeOverlay();
+                    },
                 }));
             });
         } else if (messages.pending) {

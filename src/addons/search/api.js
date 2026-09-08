@@ -122,6 +122,7 @@
                 text: result.message_text,
                 timestamp: result.timestamp,
                 sender: usersById.get(result.sender_id)?.username || 'Unknown',
+                mid: result.mid,
             }));
 
             return { items, pending: false, error: false };

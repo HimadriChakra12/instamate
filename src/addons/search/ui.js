@@ -27,6 +27,21 @@ const IM_SEARCH_CSS = `
         .im-hint { padding: 10px 18px; border-top: 1px solid #3a3a3a; font-size: 11px; color: #8e8e8e; }
     `;
 
+    // Navigates like an in-app click would, instead of a full page
+    // reload: pushState changes the URL without reloading, and dispatching
+    // a synthetic popstate event is what makes React Router's history
+    // implementation (which listens for popstate to sync its own route
+    // state) actually notice the change and re-render -- pushState alone
+    // doesn't fire that event on its own. Faster than a reload, and
+    // (per testing) actually respects params like ?mid= that a full
+    // server-rendered reload seems to ignore -- likely because that
+    // "jump to X" logic only runs on in-app client-side transitions, not
+    // on initial page hydration.
+    function im_navigateSpa(url) {
+        history.pushState(null, '', url);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+
     function im_searchRow({ avatar, name, sub, onClick }) {
         const row = document.createElement('div');
         row.className = 'im-row';
@@ -138,7 +153,7 @@ const IM_SEARCH_CSS = `
                     name: person.fullName || person.username,
                     sub: '@' + person.username + (person.isPrivate ? ' \u00b7 Private' : ''),
                     onClick: () => {
-                        location.href = `https://www.instagram.com/${person.username}/`;
+                        im_navigateSpa(`https://www.instagram.com/${person.username}/`);
                         closeOverlay();
                     },
                 }));
@@ -156,6 +171,13 @@ const IM_SEARCH_CSS = `
                 results.append(im_searchRow({
                     name: message.text,
                     sub: `${message.sender} \u00b7 ${when}`,
+                    onClick: () => {
+                        if (!message.mid) return;
+                        const url = new URL(location.href);
+                        url.searchParams.set('mid', message.mid);
+                        im_navigateSpa(url.toString());
+                        closeOverlay();
+                    },
                 }));
             });
         } else if (messages.pending) {
