@@ -126,11 +126,6 @@ const IM_SEARCH_CSS = `
 
         results.innerHTML = '';
 
-        if (people.length === 0 && messages.pending) {
-            results.innerHTML = '<div class="im-empty">No people found. Message search isn\u2019t wired up yet.</div>';
-            return;
-        }
-
         if (people.length > 0) {
             const label = document.createElement('div');
             label.className = 'im-section-label';
@@ -150,17 +145,33 @@ const IM_SEARCH_CSS = `
             });
         }
 
-        if (messages.pending) {
-            const label = document.createElement('div');
-            label.className = 'im-section-label';
-            label.textContent = 'Messages';
+        const messagesLabel = document.createElement('div');
+        messagesLabel.className = 'im-section-label';
+        messagesLabel.textContent = 'Messages in this chat';
+
+        if (messages.items.length > 0) {
+            results.append(messagesLabel);
+            messages.items.slice(0, 8).forEach((message) => {
+                const when = new Date(message.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                results.append(im_searchRow({
+                    name: message.text,
+                    sub: `${message.sender} \u00b7 ${when}`,
+                }));
+            });
+        } else if (messages.pending) {
             const note = document.createElement('div');
             note.className = 'im-empty';
-            note.textContent = 'Message search isn\u2019t wired up yet \u2014 see api.js for what\u2019s needed.';
-            results.append(label, note);
-        }
-
-        if (people.length === 0 && !messages.pending) {
-            results.innerHTML = '<div class="im-empty">No results.</div>';
+            note.textContent = 'Still picking up this chat\u2019s details \u2014 try again in a moment.';
+            results.append(messagesLabel, note);
+        } else if (messages.error) {
+            const note = document.createElement('div');
+            note.className = 'im-empty';
+            note.textContent = 'Message search failed \u2014 Instagram may have rejected the request.';
+            results.append(messagesLabel, note);
+        } else {
+            const note = document.createElement('div');
+            note.className = 'im-empty';
+            note.textContent = 'No matching messages.';
+            results.append(messagesLabel, note);
         }
     };

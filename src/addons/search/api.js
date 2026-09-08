@@ -22,24 +22,110 @@
     };
 
     // ---------------------------------------------------------------------
-    // Message search is NOT wired up yet. Instagram's DM search-within-
-    // conversation almost certainly runs through a GraphQL call keyed by a
-    // numeric `doc_id` (a persisted-query identifier) rather than a plain
-    // REST path -- those ids aren't derivable from the endpoint shape, they
-    // have to be read off a real request. Guessing one wrong doesn't just
-    // fail cleanly, it can send a malformed query to Instagram's backend.
+    // Message search -- confirmed real via a captured HAR of Instagram's
+    // own in-DM search feature:
     //
-    // To wire this up for real: open DevTools -> Network -> XHR, use
-    // Instagram's own message-search (the magnifying glass in a DM's
-    // header searches within that conversation), and send over:
-    //   1. the full request URL
-    //   2. the request payload/variables (if it's a POST/GraphQL call)
-    //   3. a sample of the response JSON shape
-    // Same approach that nailed down the CDN hostname patterns and the
-    // shared-post-card structure earlier in this project -- once we have
-    // one real example, this gets filled in precisely instead of guessed.
+    //   GET /api/v1/direct_v2/in_thread_message_search/
+    //       ?id=<numeric_thread_id>&offset=<n>&query=<text>
+    //
+    // A plain REST GET, not GraphQL -- no doc_id/fb_dtsg batch machinery
+    // needed, just the standard IG headers already used elsewhere in this
+    // addon's requests.
+    //
+    // The one wrinkle: the `id` it wants isn't the thread key from the URL
+    // (/direct/t/<key>/) -- it's a different, much longer internal numeric
+    // thread id that Instagram's own page embeds in various responses
+    // (e.g. as "thread_id" or "thread_igid" in its GraphQL/nav calls).
+    // Rather than firing an extra GraphQL request with a rotating doc_id
+    // just to resolve that id, this passively captures it from responses
+    // Instagram's own page already makes as a side effect of simply having
+    // that DM open -- zero extra requests, and it self-heals if Instagram
+    // changes how/where that id shows up as long as it's still present
+    // *somewhere* in a response body as "thread_id"/"thread_igid".
     // ---------------------------------------------------------------------
+
+    const IM_THREAD_ID_CACHE = new Map(); // url thread-key -> resolved numeric thread id
+
+    function im_currentThreadKey() {
+        const match = location.pathname.match(/\/direct\/t\/([^/]+)/);
+        return match ? match[1] : null;
+    }
+
+    function im_captureThreadIdFromText(text) {
+        const key = im_currentThreadKey();
+        if (!key || IM_THREAD_ID_CACHE.has(key)) return;
+        const match = text.match(/"thread_id"\s*:\s*"(\d{10,})"/) || text.match(/"thread_igid"\s*:\s*"(\d{10,})"/);
+        if (match) IM_THREAD_ID_CACHE.set(key, match[1]);
+    }
+
+    IMSearch.watchForThreadId = function watchForThreadId() {
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async (...args) => {
+            const response = await originalFetch(...args);
+            response.clone().text().then(im_captureThreadIdFromText).catch(() => {
+                /* response body not text-readable (e.g. binary) -- ignore */
+            });
+            return response;
+        };
+
+        // Instagram's own internal request library uses XMLHttpRequest for
+        // these calls (confirmed via DevTools showing them as Type: xhr),
+        // not fetch -- the wrapper above alone never sees them at all.
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function open(...args) {
+            this.addEventListener('load', () => {
+                try {
+                    if (typeof this.responseText === 'string') im_captureThreadIdFromText(this.responseText);
+                } catch {
+                    /* responseText inaccessible for this responseType (e.g. 'blob') -- ignore */
+                }
+            });
+            return originalOpen.apply(this, args);
+        };
+    };
+
+    function im_getCookie(name) {
+        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
     IMSearch.searchMessages = async function searchMessages(query) {
-        void query;
-        return { pending: true };
+        const key = im_currentThreadKey();
+        if (!query || !key) return { items: [], pending: false, error: false };
+
+        const threadId = IM_THREAD_ID_CACHE.get(key);
+        if (!threadId) {
+            // Not captured yet -- happens if the overlay is opened within
+            // the first moment or two of loading a DM, before Instagram's
+            // own requests have carried the id through. It resolves itself
+            // shortly; nothing to retry manually.
+            return { items: [], pending: true, error: false };
+        }
+
+        try {
+            const url = `https://www.instagram.com/api/v1/direct_v2/in_thread_message_search/?id=${threadId}&offset=0&query=${encodeURIComponent(query)}`;
+            const response = await fetch(url, {
+                credentials: 'include',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': im_getCookie('csrftoken'),
+                    'X-IG-App-ID': '936619743392459',
+                },
+            });
+            if (!response.ok) return { items: [], pending: false, error: true };
+
+            const data = await response.json();
+            const usersById = new Map((data.thread?.users || []).map((u) => [u.id, u]));
+
+            const items = (data.in_thread_content_results || []).map((result) => ({
+                id: result.item_id,
+                text: result.message_text,
+                timestamp: result.timestamp,
+                sender: usersById.get(result.sender_id)?.username || 'Unknown',
+            }));
+
+            return { items, pending: false, error: false };
+        } catch {
+            return { items: [], pending: false, error: true };
+        }
     };

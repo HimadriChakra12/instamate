@@ -14,9 +14,10 @@
     // as everything else in this project; no different in kind from any
     // other fetch() call already made throughout this codebase.
     //
-    // Message search is a placeholder for now -- see api.js for exactly
-    // why and what's needed to wire it up for real, rather than guessing
-    // at an endpoint that might silently misbehave.
+    // Message search hits Instagram's own in-thread search endpoint
+    // (confirmed via a captured HAR of their real search-within-DM
+    // feature) -- see api.js for the endpoint and how the internal
+    // numeric thread id it needs gets resolved passively.
     //
     // Structured like Float/Security/InstaSnap: this file defines the
     // shared `IMSearch` object; the other files attach methods to it;
@@ -27,6 +28,13 @@
         debounceMs: 250, // avoid hammering Instagram's endpoint on every keystroke
 
         init() {
+            // Starts immediately (not deferred until the overlay first
+            // opens) since it needs to observe Instagram's own requests
+            // from page load onward -- by the time someone presses
+            // Ctrl+K, the thread id for whatever chat they're in should
+            // already be captured.
+            this.watchForThreadId();
+
             // Firefox binds Ctrl+K to focusing its own toolbar search bar
             // by default -- but that's a page-overridable binding, not a
             // hard-reserved one (Ctrl+T/Ctrl+W/Ctrl+N and a handful of

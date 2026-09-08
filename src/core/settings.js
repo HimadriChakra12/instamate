@@ -94,21 +94,11 @@
             label: 'Float',
             description: 'Get floating windowed chats',
         },
-        {
-            key: 'security',
-            label: 'Security / Anti-Telemetry',
-            description: 'Blocks Instagram\u2019s telemetry beacons, known analytics/tracking endpoints, and strips click-id tracking params from the URL.',
-        },
     ];
 
     // Manifest of addons -- permanent changes, always on once built in. Shown
     // in the popup for visibility only; there is no toggle for these.
     const IM_ADDONS = [
-        {
-            key: 'sharedmedia',
-            label: 'Shared Media',
-            description: 'Adds a grid of this chat\u2019s photos/videos to the settings popup \u2014 the gallery view web is missing versus the mobile app.',
-        },
         {
             key: 'reelsramsaver',
             label: 'Reels RAM Saver',
@@ -123,6 +113,11 @@
             key: 'search',
             label: 'Search (Ctrl/Cmd+K)',
             description: 'Discord-style search overlay for people, with a Messages section pending a wired-up endpoint.',
+        },
+        {
+            key: 'security',
+            label: 'Security / Anti-Telemetry',
+            description: 'Blocks Instagram\u2019s telemetry beacons, known analytics/tracking endpoints, and strips click-id tracking params from the URL.',
         },
     ];
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      4.08.10
+// @version      4.09.10
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -92,19 +92,9 @@
             label: 'Float',
             description: 'Get floating windowed chats',
         },
-        {
-            key: 'security',
-            label: 'Security / Anti-Telemetry',
-            description: 'Blocks Instagram\u2019s telemetry beacons, known analytics/tracking endpoints, and strips click-id tracking params from the URL.',
-        },
     ];
 
     const IM_ADDONS = [
-        {
-            key: 'sharedmedia',
-            label: 'Shared Media',
-            description: 'Adds a grid of this chat\u2019s photos/videos to the settings popup \u2014 the gallery view web is missing versus the mobile app.',
-        },
         {
             key: 'reelsramsaver',
             label: 'Reels RAM Saver',
@@ -119,6 +109,11 @@
             key: 'search',
             label: 'Search (Ctrl/Cmd+K)',
             description: 'Discord-style search overlay for people, with a Messages section pending a wired-up endpoint.',
+        },
+        {
+            key: 'security',
+            label: 'Security / Anti-Telemetry',
+            description: 'Blocks Instagram\u2019s telemetry beacons, known analytics/tracking endpoints, and strips click-id tracking params from the URL.',
         },
     ];
 
@@ -1029,9 +1024,7 @@
     };
 
 // ---- addons/security/launch.js ----
-if (IM.isEnabled('security')) {
     Security.init();
-}
 
 // ---- addons/instasnap/core.js ----
     const InstaSnap = {
@@ -1140,6 +1133,8 @@ if (IM.isEnabled('security')) {
         debounceMs: 250, // avoid hammering Instagram's endpoint on every keystroke
 
         init() {
+            this.watchForThreadId();
+
             window.addEventListener('keydown', (event) => {
                 const isShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey
                     && event.key.toLowerCase() === 'k';
@@ -1173,9 +1168,82 @@ if (IM.isEnabled('security')) {
         }
     };
 
+
+    const IM_THREAD_ID_CACHE = new Map(); // url thread-key -> resolved numeric thread id
+
+    function im_currentThreadKey() {
+        const match = location.pathname.match(/\/direct\/t\/([^/]+)/);
+        return match ? match[1] : null;
+    }
+
+    function im_captureThreadIdFromText(text) {
+        const key = im_currentThreadKey();
+        if (!key || IM_THREAD_ID_CACHE.has(key)) return;
+        const match = text.match(/"thread_id"\s*:\s*"(\d{10,})"/) || text.match(/"thread_igid"\s*:\s*"(\d{10,})"/);
+        if (match) IM_THREAD_ID_CACHE.set(key, match[1]);
+    }
+
+    IMSearch.watchForThreadId = function watchForThreadId() {
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async (...args) => {
+            const response = await originalFetch(...args);
+            response.clone().text().then(im_captureThreadIdFromText).catch(() => {
+            });
+            return response;
+        };
+
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function open(...args) {
+            this.addEventListener('load', () => {
+                try {
+                    if (typeof this.responseText === 'string') im_captureThreadIdFromText(this.responseText);
+                } catch {
+                }
+            });
+            return originalOpen.apply(this, args);
+        };
+    };
+
+    function im_getCookie(name) {
+        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
     IMSearch.searchMessages = async function searchMessages(query) {
-        void query;
-        return { pending: true };
+        const key = im_currentThreadKey();
+        if (!query || !key) return { items: [], pending: false, error: false };
+
+        const threadId = IM_THREAD_ID_CACHE.get(key);
+        if (!threadId) {
+            return { items: [], pending: true, error: false };
+        }
+
+        try {
+            const url = `https://www.instagram.com/api/v1/direct_v2/in_thread_message_search/?id=${threadId}&offset=0&query=${encodeURIComponent(query)}`;
+            const response = await fetch(url, {
+                credentials: 'include',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': im_getCookie('csrftoken'),
+                    'X-IG-App-ID': '936619743392459',
+                },
+            });
+            if (!response.ok) return { items: [], pending: false, error: true };
+
+            const data = await response.json();
+            const usersById = new Map((data.thread?.users || []).map((u) => [u.id, u]));
+
+            const items = (data.in_thread_content_results || []).map((result) => ({
+                id: result.item_id,
+                text: result.message_text,
+                timestamp: result.timestamp,
+                sender: usersById.get(result.sender_id)?.username || 'Unknown',
+            }));
+
+            return { items, pending: false, error: false };
+        } catch {
+            return { items: [], pending: false, error: true };
+        }
     };
 
 // ---- addons/search/ui.js ----
@@ -1307,11 +1375,6 @@ const IM_SEARCH_CSS = `
 
         results.innerHTML = '';
 
-        if (people.length === 0 && messages.pending) {
-            results.innerHTML = '<div class="im-empty">No people found. Message search isn\u2019t wired up yet.</div>';
-            return;
-        }
-
         if (people.length > 0) {
             const label = document.createElement('div');
             label.className = 'im-section-label';
@@ -1331,18 +1394,34 @@ const IM_SEARCH_CSS = `
             });
         }
 
-        if (messages.pending) {
-            const label = document.createElement('div');
-            label.className = 'im-section-label';
-            label.textContent = 'Messages';
+        const messagesLabel = document.createElement('div');
+        messagesLabel.className = 'im-section-label';
+        messagesLabel.textContent = 'Messages in this chat';
+
+        if (messages.items.length > 0) {
+            results.append(messagesLabel);
+            messages.items.slice(0, 8).forEach((message) => {
+                const when = new Date(message.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                results.append(im_searchRow({
+                    name: message.text,
+                    sub: `${message.sender} \u00b7 ${when}`,
+                }));
+            });
+        } else if (messages.pending) {
             const note = document.createElement('div');
             note.className = 'im-empty';
-            note.textContent = 'Message search isn\u2019t wired up yet \u2014 see api.js for what\u2019s needed.';
-            results.append(label, note);
-        }
-
-        if (people.length === 0 && !messages.pending) {
-            results.innerHTML = '<div class="im-empty">No results.</div>';
+            note.textContent = 'Still picking up this chat\u2019s details \u2014 try again in a moment.';
+            results.append(messagesLabel, note);
+        } else if (messages.error) {
+            const note = document.createElement('div');
+            note.className = 'im-empty';
+            note.textContent = 'Message search failed \u2014 Instagram may have rejected the request.';
+            results.append(messagesLabel, note);
+        } else {
+            const note = document.createElement('div');
+            note.className = 'im-empty';
+            note.textContent = 'No matching messages.';
+            results.append(messagesLabel, note);
         }
     };
 
