@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      4.10.10
+// @version      4.11.10
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -108,7 +108,7 @@
         {
             key: 'search',
             label: 'Search (Ctrl/Cmd+K)',
-            description: 'Discord-style search overlay for people, with a Messages section pending a wired-up endpoint.',
+            description: 'Discord-style search overlay (Ctrl/Cmd+K) with bangs: @accounts, #groups, !dms, or bare for following + messages in the open chat.',
         },
         {
             key: 'security',
@@ -1169,7 +1169,9 @@
     };
 
 
-    const IM_THREAD_ID_CACHE = new Map(); // url thread-key -> resolved numeric thread id
+    const IM_THREAD_ID_CACHE = new Map(); // url thread-key -> resolved big numeric thread id (for in_thread_message_search)
+    const IM_THREAD_FBID_CACHE = new Map(); // url thread-key -> resolved thread_fbid (for the GraphQL anchor calls)
+    const IM_AUTH_TOKENS = { fbDtsg: null, lsd: null, jazoest: null, actorId: null };
 
     function im_currentThreadKey() {
         const match = location.pathname.match(/\/direct\/t\/([^/]+)/);
@@ -1178,15 +1180,37 @@
 
     function im_captureThreadIdFromText(text) {
         const key = im_currentThreadKey();
-        if (!key || IM_THREAD_ID_CACHE.has(key)) return;
-        const match = text.match(/"thread_id"\s*:\s*"(\d{10,})"/) || text.match(/"thread_igid"\s*:\s*"(\d{10,})"/);
-        if (match) IM_THREAD_ID_CACHE.set(key, match[1]);
+        if (key) {
+            if (!IM_THREAD_ID_CACHE.has(key)) {
+                const match = text.match(/"thread_id"\s*:\s*"(\d{10,})"/) || text.match(/"thread_igid"\s*:\s*"(\d{10,})"/);
+                if (match) IM_THREAD_ID_CACHE.set(key, match[1]);
+            }
+            if (!IM_THREAD_FBID_CACHE.has(key)) {
+                const match = text.match(/"thread_fbid"\s*:\s*"(\d{10,})"/);
+                if (match) IM_THREAD_FBID_CACHE.set(key, match[1]);
+            }
+        }
+        if (!IM_AUTH_TOKENS.actorId) {
+            const match = text.match(/"actorID"\s*:\s*"(\d{10,})"/);
+            if (match) IM_AUTH_TOKENS.actorId = match[1];
+        }
+    }
+
+    function im_captureAuthTokensFromBody(body) {
+        if (typeof body !== 'string') return;
+        const dtsgMatch = body.match(/(?:^|&)fb_dtsg=([^&]+)/);
+        const lsdMatch = body.match(/(?:^|&)lsd=([^&]+)/);
+        const jazoestMatch = body.match(/(?:^|&)jazoest=([^&]+)/);
+        if (dtsgMatch) IM_AUTH_TOKENS.fbDtsg = decodeURIComponent(dtsgMatch[1]);
+        if (lsdMatch) IM_AUTH_TOKENS.lsd = decodeURIComponent(lsdMatch[1]);
+        if (jazoestMatch) IM_AUTH_TOKENS.jazoest = decodeURIComponent(jazoestMatch[1]);
     }
 
     IMSearch.watchForThreadId = function watchForThreadId() {
         const originalFetch = window.fetch.bind(window);
-        window.fetch = async (...args) => {
-            const response = await originalFetch(...args);
+        window.fetch = async (input, init) => {
+            if (init?.body) im_captureAuthTokensFromBody(init.body);
+            const response = await originalFetch(input, init);
             response.clone().text().then(im_captureThreadIdFromText).catch(() => {
             });
             return response;
@@ -1201,6 +1225,12 @@
                 }
             });
             return originalOpen.apply(this, args);
+        };
+
+        const originalSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function send(body) {
+            im_captureAuthTokensFromBody(body);
+            return originalSend.call(this, body);
         };
     };
 
@@ -1247,6 +1277,164 @@
         }
     };
 
+
+    async function im_graphqlAnchorQuery(docId, friendlyName, variables) {
+        if (!IM_AUTH_TOKENS.fbDtsg || !IM_AUTH_TOKENS.lsd || !IM_AUTH_TOKENS.actorId) return null;
+
+        const body = new URLSearchParams({
+            av: IM_AUTH_TOKENS.actorId,
+            __d: 'www',
+            __user: '0',
+            __a: '1',
+            fb_dtsg: IM_AUTH_TOKENS.fbDtsg,
+            jazoest: IM_AUTH_TOKENS.jazoest || '',
+            lsd: IM_AUTH_TOKENS.lsd,
+            fb_api_caller_class: 'RelayModern',
+            fb_api_req_friendly_name: friendlyName,
+            server_timestamps: 'true',
+            variables: JSON.stringify(variables),
+            doc_id: docId,
+        });
+
+        try {
+            const response = await fetch('https://www.instagram.com/api/graphql', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': im_getCookie('csrftoken'),
+                    'X-FB-Friendly-Name': friendlyName,
+                    'X-FB-LSD': IM_AUTH_TOKENS.lsd,
+                    'X-IG-App-ID': '936619743392459',
+                },
+                body: body.toString(),
+            });
+            if (!response.ok) return null;
+            return await response.json();
+        } catch {
+            return null;
+        }
+    }
+
+    function im_slideMessageToPlain(node) {
+        return {
+            id: node.message_id,
+            text: node.text_body || node.content?.text_body || '',
+            sender: node.sender?.user_dict?.username || node.sender?.name || 'Unknown',
+            senderAvatar: node.sender?.user_dict?.profile_pic_url || '',
+            timestamp: Number(node.timestamp_ms),
+        };
+    }
+
+    IMSearch.fetchMessageContext = async function fetchMessageContext(mid) {
+        const key = im_currentThreadKey();
+        const threadFbid = key && IM_THREAD_FBID_CACHE.get(key);
+        if (!threadFbid) return { before: [], after: [], error: false, pending: true };
+
+        const [beforeData, afterData] = await Promise.all([
+            im_graphqlAnchorQuery(27698093573152499, 'IGDMessageListAnchorMessageRangeBeforeOffMsysQuery', {
+                after: null, before: null, first: null,
+                include_edge_message: true, is_anchor_message: true, last: 20,
+                newer_than_message_id: mid, older_than_message_id: null,
+                id: threadFbid,
+            }),
+            im_graphqlAnchorQuery(27614839121471969, 'IGDMessageListAnchorMessageRangeAfterOffMsysQuery', {
+                after: null, before: null, first: 20,
+                include_edge_message: null, is_anchor_message: true, last: null,
+                newer_than_message_id: null, older_than_message_id: mid,
+                id: threadFbid,
+            }),
+        ]);
+
+        if (!beforeData && !afterData) return { before: [], after: [], error: true, pending: false };
+
+        const beforeEdges = beforeData?.data?.fetch__SlideThread?.as_ig_direct_thread?.slide_messages_before?.edges || [];
+        const afterEdges = afterData?.data?.fetch__SlideThread?.as_ig_direct_thread?.slide_messages_after?.edges || [];
+
+        return {
+            before: beforeEdges.map((e) => im_slideMessageToPlain(e.node)).reverse(),
+            after: afterEdges.map((e) => im_slideMessageToPlain(e.node)),
+            error: false,
+            pending: false,
+        };
+    };
+
+
+    IMSearch.scrapeConversationList = function scrapeConversationList() {
+        const links = [...document.querySelectorAll('a[href^="/direct/t/"]')];
+        const seen = new Set();
+        const conversations = [];
+
+        links.forEach((link) => {
+            const href = link.getAttribute('href');
+            if (seen.has(href)) return;
+
+            const row = link.closest('div[role="button"]') || link.parentElement;
+            if (!row) return;
+
+            const avatars = [...row.querySelectorAll('img')].filter((img) => {
+                const w = img.naturalWidth || img.width || 0;
+                return w > 0 && w < 100; // avatar-sized, excludes any larger preview thumbnails
+            });
+            if (avatars.length === 0) return;
+
+            const textNodes = [...row.querySelectorAll('span')]
+                .map((s) => s.textContent.trim())
+                .filter(Boolean);
+            const title = textNodes[0] || avatars[0].alt || 'Conversation';
+
+            seen.add(href);
+            conversations.push({
+                href,
+                title,
+                avatar: avatars[0].currentSrc || avatars[0].src || '',
+                isGroup: avatars.length > 1,
+            });
+        });
+
+        return conversations;
+    };
+
+    IMSearch.searchConversations = function searchConversations(query, { groupOnly = false, dmOnly = false } = {}) {
+        const all = this.scrapeConversationList();
+        const filtered = all.filter((c) => {
+            if (groupOnly && !c.isGroup) return false;
+            if (dmOnly && c.isGroup) return false;
+            return !query || c.title.toLowerCase().includes(query.toLowerCase());
+        });
+        return filtered.slice(0, 10);
+    };
+
+    IMSearch.getRecentConversations = function getRecentConversations(limit = 5) {
+        return this.scrapeConversationList().slice(0, limit);
+    };
+
+
+    IMSearch.searchFollowing = async function searchFollowing(query) {
+        if (!IM_AUTH_TOKENS.actorId) return [];
+        try {
+            const url = `https://www.instagram.com/api/v1/friendships/${IM_AUTH_TOKENS.actorId}/following/?query=${encodeURIComponent(query)}`;
+            const response = await fetch(url, {
+                credentials: 'include',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': im_getCookie('csrftoken'),
+                    'X-IG-App-ID': '936619743392459',
+                },
+            });
+            if (!response.ok) return [];
+            const data = await response.json();
+            return (data.users || []).map((user) => ({
+                username: user.username,
+                fullName: user.full_name,
+                avatar: user.profile_pic_url,
+                isPrivate: user.is_private,
+            }));
+        } catch {
+            return [];
+        }
+    };
+
 // ---- addons/search/ui.js ----
 const IM_SEARCH_CSS = `
         :host { all: initial; }
@@ -1275,6 +1463,16 @@ const IM_SEARCH_CSS = `
         .im-sub { font-size: 12px; color: #8e8e8e; }
         .im-empty { padding: 24px 18px; text-align: center; color: #8e8e8e; font-size: 13px; }
         .im-hint { padding: 10px 18px; border-top: 1px solid #3a3a3a; font-size: 11px; color: #8e8e8e; }
+        .im-back { display: flex; align-items: center; gap: 6px; padding: 12px 18px; cursor: pointer; font-size: 13px; font-weight: 600; color: #8e8e8e; border-bottom: 1px solid #3a3a3a; }
+        .im-back:hover { color: #f5f5f5; }
+        .im-transcript { padding: 8px 0; }
+        .im-tmsg { display: flex; gap: 10px; padding: 6px 18px; }
+        .im-tmsg .im-avatar { width: 26px; height: 26px; margin-top: 2px; }
+        .im-tmsg .im-name { font-size: 13px; }
+        .im-tmsg .im-text { font-size: 13px; color: #d8d8d8; margin-top: 1px; }
+        .im-tmsg.matched { background: rgba(255,204,0,.1); border-left: 3px solid #ffcc00; padding-left: 15px; }
+        .im-tmsg.matched .im-text { color: #f5f5f5; font-weight: 600; }
+        .im-tmsg .im-time { font-size: 11px; color: #6a6a6a; margin-left: 6px; }
     `;
 
     function im_navigateSpa(url) {
@@ -1285,12 +1483,15 @@ const IM_SEARCH_CSS = `
     function im_searchRow({ avatar, name, sub, onClick }) {
         const row = document.createElement('div');
         row.className = 'im-row';
-        const img = document.createElement('img');
-        img.className = 'im-avatar';
-        if (avatar) img.src = avatar;
+        if (avatar !== undefined) {
+            const img = document.createElement('img');
+            img.className = 'im-avatar';
+            if (avatar) img.src = avatar;
+            row.append(img);
+        }
         const text = document.createElement('div');
         text.innerHTML = `<div class="im-name">${name}</div>${sub ? `<div class="im-sub">${sub}</div>` : ''}`;
-        row.append(img, text);
+        row.append(text);
         if (onClick) row.addEventListener('click', onClick);
         return row;
     }
@@ -1323,11 +1524,10 @@ const IM_SEARCH_CSS = `
 
         const input = document.createElement('input');
         input.className = 'im-input';
-        input.placeholder = 'Search people or messages\u2026';
+        input.placeholder = 'Search\u2026  @accounts  #groups  !dms';
 
         const results = document.createElement('div');
         results.className = 'im-results';
-        results.innerHTML = '<div class="im-empty">Start typing to search</div>';
 
         const hint = document.createElement('div');
         hint.className = 'im-hint';
@@ -1345,6 +1545,8 @@ const IM_SEARCH_CSS = `
         };
         this._closeFn = shut;
 
+        let lastQuery = '';
+
         backdrop.addEventListener('click', (event) => {
             if (event.target === backdrop) shut();
         });
@@ -1358,14 +1560,21 @@ const IM_SEARCH_CSS = `
         input.addEventListener('input', () => {
             clearTimeout(this.debounceTimer);
             const query = input.value.trim();
+            lastQuery = query;
             if (!query) {
-                results.innerHTML = '<div class="im-empty">Start typing to search</div>';
+                this.renderRecentConversations(results, shut);
                 return;
             }
             results.innerHTML = '<div class="im-empty">Searching\u2026</div>';
             this.debounceTimer = setTimeout(() => this.runSearch(query, results, shut), this.debounceMs);
         });
 
+        this._rerunLastSearch = () => {
+            if (lastQuery) this.runSearch(lastQuery, results, shut);
+            else this.renderRecentConversations(results, shut);
+        };
+
+        this.renderRecentConversations(results, shut);
         input.focus();
     };
 
@@ -1373,32 +1582,112 @@ const IM_SEARCH_CSS = `
         this._closeFn?.();
     };
 
-    IMSearch.runSearch = async function runSearch(query, results, closeOverlay) {
-        const [people, messages] = await Promise.all([
-            this.searchPeople(query),
-            this.searchMessages(query),
-        ]);
-
+    IMSearch.renderRecentConversations = function renderRecentConversations(results, closeOverlay) {
+        const recent = this.getRecentConversations(5);
         results.innerHTML = '';
 
-        if (people.length > 0) {
-            const label = document.createElement('div');
-            label.className = 'im-section-label';
-            label.textContent = 'People';
-            results.append(label);
-
-            people.slice(0, 6).forEach((person) => {
-                results.append(im_searchRow({
-                    avatar: person.avatar,
-                    name: person.fullName || person.username,
-                    sub: '@' + person.username + (person.isPrivate ? ' \u00b7 Private' : ''),
-                    onClick: () => {
-                        im_navigateSpa(`https://www.instagram.com/${person.username}/`);
-                        closeOverlay();
-                    },
-                }));
-            });
+        if (recent.length === 0) {
+            results.innerHTML = '<div class="im-empty">Start typing to search \u2014 or try @accounts, #groups, !dms</div>';
+            return;
         }
+
+        const label = document.createElement('div');
+        label.className = 'im-section-label';
+        label.textContent = 'Recent';
+        results.append(label);
+
+        recent.forEach((conversation) => {
+            results.append(im_searchRow({
+                avatar: conversation.avatar,
+                name: conversation.title,
+                sub: conversation.isGroup ? 'Group' : 'Direct message',
+                onClick: () => {
+                    im_navigateSpa(`https://www.instagram.com${conversation.href}`);
+                    closeOverlay();
+                },
+            }));
+        });
+    };
+
+    function im_parseBang(raw) {
+        if (raw.startsWith('@')) return { mode: 'accounts', text: raw.slice(1).trim() };
+        if (raw.startsWith('#')) return { mode: 'groups', text: raw.slice(1).trim() };
+        if (raw.startsWith('!')) return { mode: 'dms', text: raw.slice(1).trim() };
+        return { mode: 'following', text: raw };
+    }
+
+    function im_renderPeopleSection(results, people, closeOverlay, label = 'People') {
+        if (people.length === 0) {
+            results.innerHTML = `<div class="im-empty">No matching accounts.</div>`;
+            return;
+        }
+        const heading = document.createElement('div');
+        heading.className = 'im-section-label';
+        heading.textContent = label;
+        results.append(heading);
+        people.slice(0, 8).forEach((person) => {
+            results.append(im_searchRow({
+                avatar: person.avatar,
+                name: person.fullName || person.username,
+                sub: '@' + person.username + (person.isPrivate ? ' \u00b7 Private' : ''),
+                onClick: () => {
+                    im_navigateSpa(`https://www.instagram.com/${person.username}/`);
+                    closeOverlay();
+                },
+            }));
+        });
+    }
+
+    function im_renderConversationsSection(results, conversations, closeOverlay, label) {
+        if (conversations.length === 0) {
+            results.innerHTML = `<div class="im-empty">No matching ${label.toLowerCase()}.</div>`;
+            return;
+        }
+        const heading = document.createElement('div');
+        heading.className = 'im-section-label';
+        heading.textContent = label;
+        results.append(heading);
+        conversations.forEach((conversation) => {
+            results.append(im_searchRow({
+                avatar: conversation.avatar,
+                name: conversation.title,
+                sub: conversation.isGroup ? 'Group' : 'Direct message',
+                onClick: () => {
+                    im_navigateSpa(`https://www.instagram.com${conversation.href}`);
+                    closeOverlay();
+                },
+            }));
+        });
+    }
+
+    IMSearch.runSearch = async function runSearch(raw, results, closeOverlay) {
+        const { mode, text } = im_parseBang(raw);
+        results.innerHTML = '';
+
+        if (mode === 'accounts') {
+            const people = await this.searchPeople(text);
+            im_renderPeopleSection(results, people, closeOverlay, 'Accounts');
+            return;
+        }
+
+        if (mode === 'groups') {
+            const groups = this.searchConversations(text, { groupOnly: true });
+            im_renderConversationsSection(results, groups, closeOverlay, 'Groups');
+            return;
+        }
+
+        if (mode === 'dms') {
+            const dms = this.searchConversations(text, { dmOnly: true });
+            im_renderConversationsSection(results, dms, closeOverlay, 'DMs');
+            return;
+        }
+
+        const [following, messages] = await Promise.all([
+            this.searchFollowing(text),
+            this.searchMessages(text),
+        ]);
+
+        if (following.length > 0) im_renderPeopleSection(results, following, closeOverlay, 'Following');
 
         const messagesLabel = document.createElement('div');
         messagesLabel.className = 'im-section-label';
@@ -1411,13 +1700,7 @@ const IM_SEARCH_CSS = `
                 results.append(im_searchRow({
                     name: message.text,
                     sub: `${message.sender} \u00b7 ${when}`,
-                    onClick: () => {
-                        if (!message.mid) return;
-                        const url = new URL(location.href);
-                        url.searchParams.set('mid', message.mid);
-                        im_navigateSpa(url.toString());
-                        closeOverlay();
-                    },
+                    onClick: () => this.showMessageContext(message, results),
                 }));
             });
         } else if (messages.pending) {
@@ -1436,6 +1719,61 @@ const IM_SEARCH_CSS = `
             note.textContent = 'No matching messages.';
             results.append(messagesLabel, note);
         }
+    };
+
+    IMSearch.showMessageContext = async function showMessageContext(message, results) {
+        results.innerHTML = '';
+        const back = document.createElement('div');
+        back.className = 'im-back';
+        back.textContent = '\u2190 Back to results';
+        back.addEventListener('click', () => this._rerunLastSearch?.());
+        results.append(back);
+
+        const loading = document.createElement('div');
+        loading.className = 'im-empty';
+        loading.textContent = 'Loading context\u2026';
+        results.append(loading);
+
+        const context = await this.fetchMessageContext(message.mid);
+        loading.remove();
+
+        if (context.pending) {
+            const note = document.createElement('div');
+            note.className = 'im-empty';
+            note.textContent = 'Still picking up this chat\u2019s details \u2014 try again in a moment.';
+            results.append(note);
+            return;
+        }
+        if (context.error) {
+            const note = document.createElement('div');
+            note.className = 'im-empty';
+            note.textContent = 'Couldn\u2019t load context for this message.';
+            results.append(note);
+            return;
+        }
+
+        const transcript = document.createElement('div');
+        transcript.className = 'im-transcript';
+        results.append(transcript);
+
+        const renderMsg = (m, matched) => {
+            const when = new Date(m.timestamp).toLocaleString(undefined, {
+                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+            });
+            const row = document.createElement('div');
+            row.className = matched ? 'im-tmsg matched' : 'im-tmsg';
+            const avatar = document.createElement('img');
+            avatar.className = 'im-avatar';
+            if (m.senderAvatar) avatar.src = m.senderAvatar;
+            const body = document.createElement('div');
+            body.innerHTML = `<span class="im-name">${m.sender}</span><span class="im-time">${when}</span><div class="im-text">${m.text}</div>`;
+            row.append(avatar, body);
+            transcript.append(row);
+        };
+
+        context.before.forEach((m) => renderMsg(m, false));
+        renderMsg({ text: message.text, sender: message.sender, timestamp: message.timestamp, senderAvatar: '' }, true);
+        context.after.forEach((m) => renderMsg(m, false));
     };
 
 // ---- addons/search/launch.js ----

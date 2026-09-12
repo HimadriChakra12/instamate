@@ -112,7 +112,7 @@
         {
             key: 'search',
             label: 'Search (Ctrl/Cmd+K)',
-            description: 'Discord-style search overlay for people, with a Messages section pending a wired-up endpoint.',
+            description: 'Discord-style search overlay (Ctrl/Cmd+K) with bangs: @accounts, #groups, !dms, or bare for following + messages in the open chat.',
         },
         {
             key: 'security',
