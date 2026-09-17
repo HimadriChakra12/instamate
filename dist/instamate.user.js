@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instamate
 // @namespace    https://github.com/HimadriChakra12/Instamate
-// @version      4.11.10
+// @version      4.12.10
 // @description  A combination of multiple instagram userscripts
 // @match        https://*.instagram.com/*
 // @match        https://*.instagram.com/direct/t/*
@@ -1145,6 +1145,16 @@
                 event.stopImmediatePropagation();
 
                 this.toggleOverlay();
+            }, true);
+
+            window.addEventListener('keydown', (event) => {
+                if (!this.overlayOpen) return;
+                const { key, ctrlKey, metaKey, altKey } = event;
+                if (ctrlKey || metaKey || altKey) return;         // browser/our shortcuts
+                if (key === 'Escape') return;                     // let our Esc handler run
+                if (key === 'Tab' || key.startsWith('Arrow')) return; // navigation
+                event.stopPropagation();
+                event.stopImmediatePropagation();
             }, true);
         },
     };

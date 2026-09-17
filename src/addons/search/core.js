@@ -28,26 +28,8 @@
         debounceMs: 250, // avoid hammering Instagram's endpoint on every keystroke
 
         init() {
-            // Starts immediately (not deferred until the overlay first
-            // opens) since it needs to observe Instagram's own requests
-            // from page load onward -- by the time someone presses
-            // Ctrl+K, the thread id for whatever chat they're in should
-            // already be captured.
             this.watchForThreadId();
 
-            // Firefox binds Ctrl+K to focusing its own toolbar search bar
-            // by default -- but that's a page-overridable binding, not a
-            // hard-reserved one (Ctrl+T/Ctrl+W/Ctrl+N and a handful of
-            // others aren't overridable by any web page; this one is,
-            // which is exactly how Spotify/Slack/Notion/GitHub all
-            // successfully claim Ctrl+K in Firefox too). Winning that race
-            // means: listen on `window` (broadest target), in the capture
-            // phase (`true` -- runs top-down, before any bubble-phase
-            // listener anywhere else on the page gets a chance), and call
-            // preventDefault + stopPropagation synchronously and
-            // immediately, before doing anything else. Registered at
-            // document-start (as early in the page's life as a userscript
-            // can run) so nothing else has a chance to grab the key first.
             window.addEventListener('keydown', (event) => {
                 const isShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey
                     && event.key.toLowerCase() === 'k';
@@ -58,6 +40,26 @@
                 event.stopImmediatePropagation();
 
                 this.toggleOverlay();
+            }, true);
+
+            // Block Instagram's own single-key shortcuts (n, j, l, etc.) while our
+            // overlay is open. Registered here at document-start -- like the
+            // Ctrl+K listener above -- rather than only when the overlay opens,
+            // and on `window` rather than the shadow host. Capture-phase listeners
+            // run outer-to-inner (window -> document -> ... -> host), so a
+            // listener scoped to the host would only ever run *after* Instagram's
+            // own document/window-level capture listeners had already fired. A
+            // listener on window that was registered before Instagram's own code
+            // loaded wins that race and can stop the event before Instagram's
+            // handler ever sees it.
+            window.addEventListener('keydown', (event) => {
+                if (!this.overlayOpen) return;
+                const { key, ctrlKey, metaKey, altKey } = event;
+                if (ctrlKey || metaKey || altKey) return;         // browser/our shortcuts
+                if (key === 'Escape') return;                     // let our Esc handler run
+                if (key === 'Tab' || key.startsWith('Arrow')) return; // navigation
+                event.stopPropagation();
+                event.stopImmediatePropagation();
             }, true);
         },
     };
