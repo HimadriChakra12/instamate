@@ -94,6 +94,11 @@
             label: 'Float',
             description: 'Get floating windowed chats',
         },
+        {
+            key: 'diemojis',
+            label: 'Emoji Autocomplete (:code:)',
+            description: 'Discord-style :shortcode: popup after 2+ letters while typing in a DM -- arrow keys + Enter/Tab to pick, Esc to dismiss.',
+        },
     ];
 
     // Manifest of addons -- permanent changes, always on once built in. Shown

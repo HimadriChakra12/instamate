@@ -22,17 +22,24 @@ listgrant(
 listextra(
     { "anonstoryview",   "https://update.greasyfork.org/scripts/468385/Instagram%20Anonymous%20Story%20Viewer.user.js" },
     { "reelsramsaver",   "https://update.greasyfork.org/scripts/562931/Instagram%20Reels%20RAM%20Saver.user.js" },
-//    { "pipinstavideocall",   "https://update.greasyfork.org/scripts/486404/pip%20insta%20video%20call.user.js" },
-//    { "storyviewersearch",   "https://update.greasyfork.org/scripts/590249/Instagram%20Plus%20%28Web%29.user.js" },
     { "shared-media",   "Generated" },
     { "msgname",   "Generated" },
     { "float",   "Generated" },
+    { "diemojis",   "Generated" },
     );
 
 #define OPTS group( \
     "src/opts/anonstoryview/script.js", \
     "src/opts/reelsramsaver/script.js", \
     "src/opts/msgname/script.js", \
+    )
+
+#define DIEMOJIS group( \
+    "src/opts/diemojis/data.js", \
+    "src/opts/diemojis/style.js", \
+    "src/opts/diemojis/list.js", \
+    "src/opts/diemojis/core.js", \
+    "src/opts/diemojis/launch.js", \
     )
 
 #define ADDON group( \
@@ -87,6 +94,7 @@ listorder(
     "src/core/settings.js",
     "src/core/ui.js",
     OPTS
+    DIEMOJIS
     ADDON
     SECURITY
     INSTASNAP
